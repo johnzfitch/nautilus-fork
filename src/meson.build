@@ -257,6 +257,8 @@ libnautilus_sources = [
   'nautilus-thumbnails.h',
   'nautilus-animated-thumbnail.c',
   'nautilus-animated-thumbnail.h',
+  'nautilus-animated-paintable.c',
+  'nautilus-animated-paintable.h',
   'nautilus-toolbar.c',
   'nautilus-toolbar.h',
   'nautilus-toolbar-menu-sections.h',
