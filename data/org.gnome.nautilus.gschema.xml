@@ -68,6 +68,13 @@
     <value value="3" nick="encrypted_zip"/>
   </enum>
 
+  <enum id="org.gnome.nautilus.AnimatedThumbnailMode">
+    <value value="0" nick="never"/>
+    <value value="1" nick="on-hover"/>
+    <value value="2" nick="on-select"/>
+    <value value="3" nick="always"/>
+  </enum>
+
   <schema path="/org/gnome/nautilus/" id="org.gnome.nautilus" gettext-domain="nautilus">
     <child schema="org.gnome.nautilus.preferences" name="preferences"/>
     <child schema="org.gnome.nautilus.compression" name="compression"/>
@@ -137,7 +144,12 @@
       <aliases><alias value='local_only' target='local-only'/></aliases>
       <default>'local-only'</default>
       <summary>When to show thumbnails of files</summary>
-      <description>Speed trade-off for when to show a file as a thumbnail. If set to “always” then always thumbnail, even if the folder is on a remote server. If set to “local-only” then only show thumbnails for local file systems. If set to “never” then never bother to thumbnail files, just use a generic icon. Despite what the name may suggest, this applies to any previewable file type.</description>
+      <description>Speed trade-off for when to show a file as a thumbnail. If set to "always" then always thumbnail, even if the folder is on a remote server. If set to "local-only" then only show thumbnails for local file systems. If set to "never" then never bother to thumbnail files, just use a generic icon. Despite what the name may suggest, this applies to any previewable file type.</description>
+    </key>
+    <key name="animated-thumbnails" enum="org.gnome.nautilus.AnimatedThumbnailMode">
+      <default>'on-select'</default>
+      <summary>When to play animated thumbnails</summary>
+      <description>Controls when animated thumbnails (WebP, GIF, APNG) should be played. Options are "never" (show static frame only), "on-hover" (play when mouse hovers over), "on-select" (play when file is selected), or "always" (always play animations).</description>
     </key>
     <key type="t" name="thumbnail-limit">
       <default>50</default>
