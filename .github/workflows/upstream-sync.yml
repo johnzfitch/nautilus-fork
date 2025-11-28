@@ -1,0 +1,215 @@
+name: Sync Fork with Upstream GNOME Nautilus
+
+on:
+  schedule:
+    # Run daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://gitlab.gnome.org/GNOME/nautilus.git || true
+          git fetch upstream
+
+      - name: Check for upstream updates
+        id: check_updates
+        run: |
+          # Get commit counts
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          echo "commits_behind=$BEHIND" >> $GITHUB_OUTPUT
+
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "status=up-to-date" >> $GITHUB_OUTPUT
+            echo "[OK] Fork is up to date with upstream"
+          else
+            echo "status=updates-available" >> $GITHUB_OUTPUT
+            echo "[WARN] Fork is $BEHIND commits behind upstream"
+          fi
+
+      - name: Attempt merge
+        id: merge
+        if: steps.check_updates.outputs.status == 'updates-available'
+        continue-on-error: true
+        run: |
+          # Attempt to merge upstream
+          if git merge upstream/main --no-edit; then
+            echo "result=success" >> $GITHUB_OUTPUT
+            echo "[OK] Successfully merged upstream changes"
+          else
+            echo "result=conflict" >> $GITHUB_OUTPUT
+            echo "[ERROR] Merge conflicts detected"
+
+            # Get list of conflicted files
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            echo "conflicts<<EOF" >> $GITHUB_OUTPUT
+            echo "$CONFLICTS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+
+            # Abort the merge
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Push successful merge
+        if: steps.merge.outputs.result == 'success'
+        run: |
+          git push origin main
+          echo "[OK] Pushed merge to origin/main"
+
+      - name: Create issue for merge conflicts
+        if: steps.merge.outputs.result == 'conflict'
+        uses: actions/github-script@v7
+        env:
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          COMMITS_BEHIND: ${{ steps.check_updates.outputs.commits_behind }}
+        with:
+          script: |
+            const conflicts = process.env.CONFLICTS;
+            const commitsBehind = process.env.COMMITS_BEHIND;
+
+            // Check if issue already exists
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'upstream-sync-conflict'
+            });
+
+            if (issues.data.length > 0) {
+              console.log('Conflict issue already exists, updating...');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: '## New Upstream Sync Attempt Failed\n\n**Date**: ' + new Date().toISOString() + '\n**Commits Behind**: ' + commitsBehind + '\n\n**Conflicted Files**:\n```\n' + conflicts + '\n```'
+              });
+            } else {
+              console.log('Creating new conflict issue...');
+              const conflictList = conflicts.split('\n').filter(f => f).map(f => '- `' + f + '`').join('\n');
+
+              const issueBody = [
+                '## Merge Conflicts Detected',
+                '',
+                'The automated sync from upstream [GNOME/nautilus](https://gitlab.gnome.org/GNOME/nautilus) encountered merge conflicts.',
+                '',
+                '**Commits Behind**: ' + commitsBehind,
+                '',
+                '**Conflicted Files**:',
+                '```',
+                conflicts,
+                '```',
+                '',
+                '## How to Resolve',
+                '',
+                '### Option 1: Use Claude Code (Recommended)',
+                '',
+                '1. Open this repo in Claude Code',
+                '2. Run:',
+                '   ```bash',
+                '   cd ~/dev/nautilus-fork',
+                '   git fetch upstream',
+                '   git merge upstream/main',
+                '   ```',
+                '3. Ask Claude to resolve the conflicts while preserving custom features:',
+                '   - Animated WebP/GIF/APNG thumbnail support',
+                '   - Search results limit and crash prevention',
+                '   - Search-cache integration',
+                '   - FUSE mount responsiveness detection',
+                '4. After Claude resolves, commit and push:',
+                '   ```bash',
+                '   git add .',
+                '   git commit -m "merge: Resolve upstream GNOME Nautilus conflicts"',
+                '   git push origin main',
+                '   ```',
+                '',
+                '### Option 2: Manual Resolution',
+                '',
+                '```bash',
+                'cd ~/dev/nautilus-fork',
+                'git fetch upstream',
+                'git merge upstream/main',
+                '# Manually resolve conflicts in the files listed above',
+                '# Pay special attention to:',
+                '# - src/nautilus-animated-*.c (custom thumbnail code)',
+                '# - src/nautilus-search-engine-*.c (custom search engines)',
+                '# - src/nautilus-file-utilities.c (FUSE mount detection)',
+                'git add .',
+                'git commit -m "merge: Resolve upstream GNOME Nautilus conflicts"',
+                'git push origin main',
+                '```',
+                '',
+                '## Files in Conflict',
+                '',
+                'The following files have conflicting changes between your fork and upstream:',
+                '',
+                conflictList,
+                '',
+                '## Custom Features to Preserve',
+                '',
+                '- Animated thumbnail support (WebP/GIF/APNG)',
+                '- Search results limit (default 1000)',
+                '- Search-cache integration with Omarchy',
+                '- FUSE mount responsiveness detection',
+                '- Lifecycle fixes for preventing crashes',
+                '',
+                '---',
+                '',
+                '**@claude** - Please help resolve these merge conflicts while preserving all custom features.',
+                '',
+                'Close this issue once conflicts are resolved and changes are pushed.'
+              ].join('\n');
+
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Upstream GNOME Nautilus Sync Conflicts - @claude Help Needed',
+                labels: ['upstream-sync-conflict', 'help-wanted'],
+                body: issueBody
+              });
+            }
+
+      - name: Summary
+        if: always()
+        env:
+          CHECK_STATUS: ${{ steps.check_updates.outputs.status }}
+          MERGE_RESULT: ${{ steps.merge.outputs.result }}
+          COMMITS_BEHIND: ${{ steps.check_updates.outputs.commits_behind }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          echo "## Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$CHECK_STATUS" == "up-to-date" ]; then
+            echo "Fork is up to date with upstream GNOME Nautilus" >> $GITHUB_STEP_SUMMARY
+          elif [ "$MERGE_RESULT" == "success" ]; then
+            echo "Successfully merged $COMMITS_BEHIND commits from upstream" >> $GITHUB_STEP_SUMMARY
+          elif [ "$MERGE_RESULT" == "conflict" ]; then
+            echo "Merge conflicts detected in $COMMITS_BEHIND commits" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Conflicted Files**:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$CONFLICTS" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Issue created for manual resolution" >> $GITHUB_STEP_SUMMARY
+          fi
