@@ -72,17 +72,26 @@ nautilus_search_hit_compute_scores (NautilusSearchHit *hit,
         g_autoptr (GFile) hit_location = g_file_new_for_uri (hit->uri);
         g_autofree gchar *relative_path = g_file_get_relative_path (query_location, hit_location);
 
-        for (gchar *c = relative_path; c != NULL && *c != '\0'; c++)
+        if (relative_path != NULL)
         {
-            if (*c == G_DIR_SEPARATOR)
+            for (gchar *c = relative_path; c != NULL && *c != '\0'; c++)
             {
-                dir_count++;
+                if (*c == G_DIR_SEPARATOR)
+                {
+                    dir_count++;
+                }
+            }
+
+            if (dir_count < 10)
+            {
+                proximity_bonus = 10000.0 - 1000.0 * dir_count;
             }
         }
-
-        if (dir_count < 10)
+        else
         {
-            proximity_bonus = 10000.0 - 1000.0 * dir_count;
+            /* Hit is outside query location (parent directory or different filesystem).
+             * Give it zero proximity bonus so it doesn't incorrectly rank at the top. */
+            proximity_bonus = 0.0;
         }
     }
 
