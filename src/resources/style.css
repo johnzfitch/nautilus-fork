@@ -359,3 +359,10 @@ rubberband {
 .toolbar.no-bottom-padding {
   padding-bottom: 0px;
 }
+
+/* Location shadow - shows file path nested under filename at 60% opacity */
+.location-shadow {
+  opacity: 0.6;
+  font-size: 0.85em;
+  margin-top: -2px;
+}

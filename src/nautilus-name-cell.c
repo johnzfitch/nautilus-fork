@@ -35,12 +35,93 @@ struct _NautilusNameCell
     GtkWidget *snippet_button;
     GtkLabel *snippet;
     GtkWidget *path;
+    GtkWidget *location_shadow;
 
     gboolean show_snippet;
+    gboolean show_location_shadow;
     guint loading_timeout_id;
 };
 
 G_DEFINE_TYPE (NautilusNameCell, nautilus_name_cell, NAUTILUS_TYPE_VIEW_CELL)
+
+/* Maximum number of path components to show in location shadow */
+#define LOCATION_SHADOW_MAX_COMPONENTS 3
+
+static gchar *
+get_truncated_location (NautilusFile *file)
+{
+    g_autoptr (GFile) location = NULL;
+    g_autoptr (GFile) parent = NULL;
+    g_autofree gchar *parent_path = NULL;
+    g_auto (GStrv) components = NULL;
+    guint n_components;
+    GString *result;
+
+    location = nautilus_file_get_location (file);
+    if (location == NULL)
+    {
+        return NULL;
+    }
+
+    parent = g_file_get_parent (location);
+    if (parent == NULL)
+    {
+        return NULL;
+    }
+
+    parent_path = g_file_get_path (parent);
+    if (parent_path == NULL)
+    {
+        /* Handle non-local files (remote, trash, etc.) */
+        parent_path = g_file_get_uri (parent);
+        if (parent_path == NULL)
+        {
+            return NULL;
+        }
+    }
+
+    /* Split path into components */
+    components = g_strsplit (parent_path, G_DIR_SEPARATOR_S, -1);
+    n_components = g_strv_length (components);
+
+    if (n_components == 0)
+    {
+        return NULL;
+    }
+
+    result = g_string_new (NULL);
+
+    /* If path is short enough, show it all */
+    if (n_components <= LOCATION_SHADOW_MAX_COMPONENTS + 1)
+    {
+        /* Show full path but replace home dir with ~ */
+        const gchar *home = g_get_home_dir ();
+        if (g_str_has_prefix (parent_path, home))
+        {
+            g_string_append_c (result, '~');
+            g_string_append (result, parent_path + strlen (home));
+        }
+        else
+        {
+            g_string_append (result, parent_path);
+        }
+    }
+    else
+    {
+        /* Truncate: show .../last_n_components */
+        g_string_append (result, "...");
+        for (guint i = n_components - LOCATION_SHADOW_MAX_COMPONENTS; i < n_components; i++)
+        {
+            if (components[i] != NULL && strlen (components[i]) > 0)
+            {
+                g_string_append_c (result, G_DIR_SEPARATOR);
+                g_string_append (result, components[i]);
+            }
+        }
+    }
+
+    return g_string_free (result, FALSE);
+}
 
 static gchar *
 get_path_text (NautilusFile *file,
@@ -106,6 +187,7 @@ update_labels (NautilusNameCell *self)
     g_autoptr (NautilusViewItem) item = NULL;
     NautilusFile *file;
     g_autofree gchar *path_text = NULL;
+    g_autofree gchar *location_text = NULL;
     const gchar *fts_snippet = NULL;
 
     item = nautilus_view_cell_get_item (NAUTILUS_VIEW_CELL (self));
@@ -120,6 +202,18 @@ update_labels (NautilusNameCell *self)
         fts_snippet = nautilus_file_get_search_fts_snippet (file);
     }
 
+    /* Update location shadow if enabled */
+    if (self->show_location_shadow)
+    {
+        location_text = get_truncated_location (file);
+        gtk_label_set_text (GTK_LABEL (self->location_shadow), location_text);
+        gtk_widget_set_visible (self->location_shadow, (location_text != NULL));
+    }
+    else
+    {
+        gtk_widget_set_visible (self->location_shadow, FALSE);
+    }
+
     gtk_label_set_text (GTK_LABEL (self->path), path_text);
     if (fts_snippet != NULL &&
         !g_str_equal (gtk_label_get_text (self->snippet), fts_snippet))
@@ -127,7 +221,8 @@ update_labels (NautilusNameCell *self)
         gtk_label_set_markup (self->snippet, fts_snippet);
     }
 
-    gtk_widget_set_visible (self->path, (path_text != NULL));
+    /* Hide path when location_shadow is shown - they serve the same purpose */
+    gtk_widget_set_visible (self->path, (path_text != NULL && !self->show_location_shadow));
     gtk_widget_set_visible (self->snippet_button, (fts_snippet != NULL));
 }
 
@@ -409,6 +504,17 @@ nautilus_name_cell_dispose (GObject *object)
 {
     NautilusNameCell *self = (NautilusNameCell *) object;
 
+    /* Disconnect signal group BEFORE disposing template to prevent
+     * callbacks from firing on widgets being destroyed. This fixes
+     * use-after-free crashes during search result cleanup. */
+    if (self->item_signal_group != NULL)
+    {
+        g_signal_group_set_target (self->item_signal_group, NULL);
+    }
+
+    /* Clear loading timeout to prevent callbacks after dispose */
+    g_clear_handle_id (&self->loading_timeout_id, g_source_remove);
+
     gtk_widget_dispose_template (GTK_WIDGET (self), NAUTILUS_TYPE_NAME_CELL);
 
     G_OBJECT_CLASS (nautilus_name_cell_parent_class)->dispose (object);
@@ -511,6 +617,7 @@ nautilus_name_cell_class_init (NautilusNameCellClass *klass)
     gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, snippet_button);
     gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, snippet);
     gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, path);
+    gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, location_shadow);
 
     gtk_widget_class_bind_template_callback (widget_class, on_label_query_tooltip);
     gtk_widget_class_bind_template_callback (widget_class, popover_show_cb);
@@ -549,4 +656,10 @@ GtkWidget *
 nautilus_name_cell_get_content (NautilusNameCell *self)
 {
     return self->content;
+}
+
+void
+nautilus_name_cell_show_location_shadow (NautilusNameCell *self)
+{
+    self->show_location_shadow = TRUE;
 }

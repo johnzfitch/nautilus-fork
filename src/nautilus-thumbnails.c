@@ -30,6 +30,7 @@
 #include "nautilus-global-preferences.h"
 #include "nautilus-file-utilities.h"
 #include "nautilus-hash-queue.h"
+#include "nautilus-animated-thumbnail.h"
 #include <math.h>
 #include <gtk/gtk.h>
 #include <errno.h>
@@ -63,6 +64,7 @@ typedef struct
     char *mime_type;
     time_t original_file_mtime;
     time_t updated_file_mtime;
+    gboolean is_animated;
 
     GCancellable *cancellable;
 } NautilusThumbnailInfo;

@@ -131,3 +131,26 @@ gboolean is_external_volume (GVolume *volume);
 
 GList *
 nautilus_location_list_from_file_list (GList *files);
+
+/**
+ * nautilus_file_check_fuse_mount_responsive:
+ * @file: A #GFile to check
+ * @timeout_ms: Timeout in milliseconds (recommended: 500-1000)
+ *
+ * Checks if a file/directory is accessible within the given timeout.
+ * Useful for detecting stale FUSE/SSHFS mounts.
+ *
+ * Returns: %TRUE if accessible, %FALSE if timeout or error
+ */
+gboolean nautilus_file_check_fuse_mount_responsive (GFile *file,
+                                                    guint  timeout_ms);
+
+/**
+ * nautilus_file_is_on_fuse_mount:
+ * @file: A #GFile to check
+ *
+ * Checks if the given file is on a FUSE filesystem.
+ *
+ * Returns: %TRUE if on a FUSE mount, %FALSE otherwise
+ */
+gboolean nautilus_file_is_on_fuse_mount (GFile *file);

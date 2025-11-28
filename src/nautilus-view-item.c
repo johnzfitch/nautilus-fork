@@ -338,5 +338,13 @@ nautilus_view_item_file_changed (NautilusViewItem *self)
 {
     g_return_if_fail (NAUTILUS_IS_VIEW_ITEM (self));
 
+    /* Safety check: Only emit if the cell UI is still valid.
+     * The cell may have been disposed during async operations
+     * (e.g., thumbnail completion after view destruction). */
+    if (self->item_ui == NULL || !GTK_IS_WIDGET (self->item_ui))
+    {
+        return;
+    }
+
     g_signal_emit (self, signals[FILE_CHANGED], 0);
 }

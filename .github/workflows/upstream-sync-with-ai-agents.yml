@@ -1,0 +1,474 @@
+name: Upstream Sync with AI Agent Pipeline
+
+on:
+  schedule:
+    # Run every 6 hours to check for upstream updates
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_sync:
+        description: 'Force sync even if no changes detected'
+        required: false
+        default: 'false'
+
+env:
+  UPSTREAM_REPO: 'https://gitlab.gnome.org/GNOME/nautilus.git'
+  UPSTREAM_BRANCH: 'main'
+  FORK_BRANCH: 'main'
+  FEATURE_BRANCH_PREFIX: 'upstream-sync'
+
+jobs:
+  check-upstream:
+    name: Check for Upstream Updates
+    runs-on: ubuntu-latest
+    outputs:
+      has_updates: ${{ steps.check.outputs.has_updates }}
+      upstream_commit: ${{ steps.check.outputs.upstream_commit }}
+      current_commit: ${{ steps.check.outputs.current_commit }}
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add upstream remote
+        env:
+          UPSTREAM: ${{ env.UPSTREAM_REPO }}
+          BRANCH: ${{ env.UPSTREAM_BRANCH }}
+        run: |
+          git remote add upstream "$UPSTREAM" || true
+          git fetch upstream "$BRANCH"
+
+      - name: Check for updates
+        id: check
+        env:
+          BRANCH: ${{ env.UPSTREAM_BRANCH }}
+          FORCE_SYNC: ${{ github.event.inputs.force_sync }}
+        run: |
+          UPSTREAM_COMMIT=$(git rev-parse "upstream/$BRANCH")
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+
+          echo "upstream_commit=$UPSTREAM_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "current_commit=$CURRENT_COMMIT" >> "$GITHUB_OUTPUT"
+
+          if [ "$UPSTREAM_COMMIT" != "$CURRENT_COMMIT" ] || [ "$FORCE_SYNC" == "true" ]; then
+            echo "has_updates=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream has updates!"
+          else
+            echo "has_updates=false" >> "$GITHUB_OUTPUT"
+            echo "No upstream updates"
+          fi
+
+  copilot-design-spec:
+    name: GitHub Copilot - Design Specification
+    runs-on: ubuntu-latest
+    needs: check-upstream
+    if: needs.check-upstream.outputs.has_updates == 'true'
+    outputs:
+      pr_branch: ${{ steps.generate.outputs.pr_branch }}
+      spec_file: ${{ steps.generate.outputs.spec_file }}
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Add upstream remote
+        env:
+          UPSTREAM: ${{ env.UPSTREAM_REPO }}
+          BRANCH: ${{ env.UPSTREAM_BRANCH }}
+        run: |
+          git remote add upstream "$UPSTREAM" || true
+          git fetch upstream "$BRANCH"
+
+      - name: Create feature branch
+        id: generate
+        env:
+          PREFIX: ${{ env.FEATURE_BRANCH_PREFIX }}
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          BRANCH_NAME="${PREFIX}-${TIMESTAMP}"
+          git checkout -b "$BRANCH_NAME"
+
+          echo "pr_branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          echo "spec_file=UPSTREAM-SYNC-SPEC-${TIMESTAMP}.md" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog from upstream
+        env:
+          CURRENT_COMMIT: ${{ needs.check-upstream.outputs.current_commit }}
+          UPSTREAM_COMMIT: ${{ needs.check-upstream.outputs.upstream_commit }}
+          SPEC_FILE: ${{ steps.generate.outputs.spec_file }}
+        run: |
+          mkdir -p docs
+
+          # Generate spec using safe variable substitution
+          cat > "docs/$SPEC_FILE" << 'SPEC_EOF'
+# Upstream Sync Specification
+
+**Generated:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+**Upstream Commit:** UPSTREAM_COMMIT_PLACEHOLDER
+**Current Commit:** CURRENT_COMMIT_PLACEHOLDER
+
+## Upstream Changes
+
+SPEC_EOF
+
+          # Safely append git log output
+          git log --oneline --graph "$CURRENT_COMMIT".."$UPSTREAM_COMMIT" --no-merges >> "docs/$SPEC_FILE" || echo "No commits to display" >> "docs/$SPEC_FILE"
+
+          cat >> "docs/$SPEC_FILE" << 'SPEC_EOF'
+
+## Files Changed
+
+SPEC_EOF
+
+          git diff --stat "$CURRENT_COMMIT".."$UPSTREAM_COMMIT" >> "docs/$SPEC_FILE" || echo "No file changes" >> "docs/$SPEC_FILE"
+
+          cat >> "docs/$SPEC_FILE" << 'SPEC_EOF'
+
+## Integration Requirements
+
+@copilot Please analyze the above changes and provide:
+
+1. **Breaking Changes Analysis**
+   - List any API changes that might affect our custom features
+   - Identify deprecated functions or methods
+   - Note any new dependencies or build requirements
+
+2. **Custom Feature Compatibility**
+   - Assess impact on animated WebP/GIF/APNG thumbnail support
+   - Check for conflicts with our custom patches
+   - Identify files that need manual merge resolution
+
+3. **Testing Strategy**
+   - List critical areas that need testing
+   - Suggest automated test cases
+   - Identify regression risks
+
+4. **Documentation Updates**
+   - Changelog entries for our fork
+   - README updates if needed
+   - Migration guide for users
+
+5. **Merge Strategy**
+   - Recommend merge approach (merge commit, rebase, squash)
+   - Identify files that need careful review
+   - Suggest review checklist for @claude
+
+6. **Implementation Plan**
+   - Step-by-step merge instructions
+   - Priority order for resolving conflicts
+   - Rollback strategy if issues arise
+
+## AI Agent Pipeline
+
+1. **@copilot** (this phase): Design spec and analysis
+2. **@claude**: Implement merge and resolve conflicts
+3. **@codex**: Code review and quality assurance
+
+SPEC_EOF
+
+          # Safe replacement of placeholders
+          sed -i "s|UPSTREAM_COMMIT_PLACEHOLDER|$UPSTREAM_COMMIT|g" "docs/$SPEC_FILE"
+          sed -i "s|CURRENT_COMMIT_PLACEHOLDER|$CURRENT_COMMIT|g" "docs/$SPEC_FILE"
+
+      - name: Create Copilot analysis placeholder
+        env:
+          SPEC_FILE: ${{ steps.generate.outputs.spec_file }}
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          cat > "docs/COPILOT-ANALYSIS-${TIMESTAMP}.md" << 'EOF'
+# Copilot Analysis
+
+## Instructions for Manual Copilot Session
+
+1. Open GitHub Copilot Chat in your IDE
+2. Load the specification file: docs/$SPEC_FILE_PLACEHOLDER
+3. Ask Copilot to analyze the upstream changes
+4. Request the 6 analysis sections listed in the spec
+5. Save Copilot's response to this file
+
+## Analysis Sections Required
+
+- Breaking Changes Analysis
+- Custom Feature Compatibility
+- Testing Strategy
+- Documentation Updates
+- Merge Strategy
+- Implementation Plan
+
+---
+
+*Note: This is a placeholder for manual Copilot analysis.*
+*GitHub Actions cannot directly invoke Copilot API yet.*
+*Please complete this analysis manually or integrate with Copilot CLI when available.*
+EOF
+
+          sed -i "s|\$SPEC_FILE_PLACEHOLDER|$SPEC_FILE|g" "docs/COPILOT-ANALYSIS-${TIMESTAMP}.md"
+
+      - name: Commit specification
+        env:
+          UPSTREAM_COMMIT: ${{ needs.check-upstream.outputs.upstream_commit }}
+          CURRENT_COMMIT: ${{ needs.check-upstream.outputs.current_commit }}
+          PR_BRANCH: ${{ steps.generate.outputs.pr_branch }}
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions-bot@github.com"
+          git add docs/
+
+          # Use heredoc with safe variables
+          cat > .git-commit-msg << 'MSG_EOF'
+spec: Copilot analysis for upstream sync
+
+Upstream commit: UPSTREAM_COMMIT_PLACEHOLDER
+Current commit: CURRENT_COMMIT_PLACEHOLDER
+
+Generated specification for @claude implementation phase.
+MSG_EOF
+
+          sed -i "s|UPSTREAM_COMMIT_PLACEHOLDER|$UPSTREAM_COMMIT|g" .git-commit-msg
+          sed -i "s|CURRENT_COMMIT_PLACEHOLDER|$CURRENT_COMMIT|g" .git-commit-msg
+
+          git commit -F .git-commit-msg
+          git push origin "$PR_BRANCH"
+
+  claude-implementation:
+    name: Claude Code - Implementation
+    runs-on: ubuntu-latest
+    needs: [check-upstream, copilot-design-spec]
+    if: needs.check-upstream.outputs.has_updates == 'true'
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.copilot-design-spec.outputs.pr_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Add upstream remote
+        env:
+          UPSTREAM: ${{ env.UPSTREAM_REPO }}
+          BRANCH: ${{ env.UPSTREAM_BRANCH }}
+        run: |
+          git remote add upstream "$UPSTREAM" || true
+          git fetch upstream "$BRANCH"
+
+      - name: Create Claude task file
+        env:
+          SPEC_FILE: ${{ needs.copilot-design-spec.outputs.spec_file }}
+          BRANCH: ${{ env.UPSTREAM_BRANCH }}
+        run: |
+          cat > .claude-task.md << 'CLAUDE_EOF'
+# Task: Implement Upstream Sync
+
+## Context
+You are merging upstream changes from GNOME Nautilus into our custom fork.
+
+## Specification
+See: docs/SPEC_FILE_PLACEHOLDER
+
+## Your Tasks
+
+1. **Merge upstream changes**
+   ```bash
+   git merge upstream/BRANCH_PLACEHOLDER
+   ```
+
+2. **Resolve conflicts**
+   - Follow the merge strategy from Copilot's analysis
+   - Preserve our custom animated thumbnail features
+   - Maintain compatibility with Omarchy theme integration
+
+3. **Update documentation**
+   - Update CHANGELOG.md with upstream changes
+   - Document any breaking changes
+   - Update README.md if needed
+
+4. **Run tests**
+   ```bash
+   meson setup build
+   ninja -C build test
+   ```
+
+5. **Commit changes**
+   - Use conventional commit format
+   - Reference upstream commits
+   - Tag for @codex review
+
+## Success Criteria
+- All conflicts resolved correctly
+- Tests pass
+- Custom features still work
+- Documentation updated
+- Code follows our style guide
+
+## Next Step
+After completion, @codex will review your implementation.
+CLAUDE_EOF
+
+          sed -i "s|SPEC_FILE_PLACEHOLDER|$SPEC_FILE|g" .claude-task.md
+          sed -i "s|BRANCH_PLACEHOLDER|$BRANCH|g" .claude-task.md
+
+      - name: Create implementation placeholder
+        run: |
+          cat > CLAUDE-IMPLEMENTATION-REQUIRED.md << 'EOF'
+# Claude Implementation Required
+
+This is a placeholder for manual Claude Code implementation.
+
+## Instructions
+
+1. Check out this branch locally
+2. Read `.claude-task.md` for implementation instructions
+3. Run Claude Code to implement the merge
+4. Push changes back to this branch
+
+## Claude Code Command
+
+```bash
+claude --prompt "$(cat .claude-task.md)" --auto-approve
+```
+
+## Manual Implementation Steps
+
+If Claude Code is not available:
+
+1. Merge upstream: `git merge upstream/main`
+2. Resolve conflicts manually
+3. Run tests: `meson setup build && ninja -C build test`
+4. Update documentation
+5. Commit and push
+
+---
+
+*Note: GitHub Actions cannot directly invoke Claude Code API yet.*
+*Please complete this implementation manually.*
+EOF
+
+          git add .
+          git commit -m "task: Claude implementation required" || echo "No changes"
+          git push origin "${{ needs.copilot-design-spec.outputs.pr_branch }}"
+
+  create-pull-request:
+    name: Create Pull Request
+    runs-on: ubuntu-latest
+    needs: [check-upstream, copilot-design-spec, claude-implementation]
+    if: needs.check-upstream.outputs.has_updates == 'true'
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.copilot-design-spec.outputs.pr_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Create PR body file
+        env:
+          UPSTREAM_COMMIT: ${{ needs.check-upstream.outputs.upstream_commit }}
+          CURRENT_COMMIT: ${{ needs.check-upstream.outputs.current_commit }}
+          SPEC_FILE: ${{ needs.copilot-design-spec.outputs.spec_file }}
+        run: |
+          cat > .pr-body.md << 'PR_EOF'
+## Automated Upstream Sync
+
+This PR merges upstream changes from GNOME Nautilus into our custom fork.
+
+**Upstream Commit:** `UPSTREAM_COMMIT_PLACEHOLDER`
+**Current Commit:** `CURRENT_COMMIT_PLACEHOLDER`
+
+### AI Agent Pipeline Status
+
+#### 1. @copilot - Design Specification ⏳
+- Specification generated: `docs/SPEC_FILE_PLACEHOLDER`
+- **Action Required:** Manual Copilot analysis needed
+- See: `docs/COPILOT-ANALYSIS-*.md`
+
+#### 2. @claude - Implementation ⏳
+- **Action Required:** Manual Claude Code implementation
+- Task file: `.claude-task.md`
+- See: `CLAUDE-IMPLEMENTATION-REQUIRED.md`
+
+#### 3. @codex - Code Review ⏳
+- Will run after Claude implementation completes
+
+### Manual Steps Required
+
+1. **Complete Copilot Analysis**
+   - Open GitHub Copilot in your IDE
+   - Analyze `docs/SPEC_FILE_PLACEHOLDER`
+   - Save analysis to `docs/COPILOT-ANALYSIS-*.md`
+
+2. **Run Claude Implementation**
+   ```bash
+   git checkout BRANCH_NAME_PLACEHOLDER
+   claude --prompt "$(cat .claude-task.md)" --auto-approve
+   ```
+
+3. **Run Codex Review**
+   ```bash
+   codex review --output docs/CODEX-REVIEW-$(date +%Y%m%d).md
+   ```
+
+### Testing Checklist
+
+- [ ] Manual testing in Omarchy environment
+- [ ] Animated thumbnail playback works
+- [ ] Search integration functional
+- [ ] Theme integration intact
+- [ ] No performance regressions
+- [ ] No memory leaks
+
+---
+
+🤖 **Semi-Automated AI Agent Pipeline**
+- GitHub Actions: Automation & Orchestration
+- Copilot: Specification & Analysis (manual)
+- Claude: Implementation & Integration (manual)
+- Codex: Code Review & QA (manual)
+PR_EOF
+
+          sed -i "s|UPSTREAM_COMMIT_PLACEHOLDER|$UPSTREAM_COMMIT|g" .pr-body.md
+          sed -i "s|CURRENT_COMMIT_PLACEHOLDER|$CURRENT_COMMIT|g" .pr-body.md
+          sed -i "s|SPEC_FILE_PLACEHOLDER|$SPEC_FILE|g" .pr-body.md
+          sed -i "s|BRANCH_NAME_PLACEHOLDER|${{ needs.copilot-design-spec.outputs.pr_branch }}|g" .pr-body.md
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          PR_BRANCH: ${{ needs.copilot-design-spec.outputs.pr_branch }}
+          UPSTREAM_COMMIT: ${{ needs.check-upstream.outputs.upstream_commit }}
+        run: |
+          # Create PR using GitHub CLI with safe body from file
+          gh pr create \
+            --base main \
+            --head "$PR_BRANCH" \
+            --title "🤖 Upstream Sync: Merge GNOME Nautilus ${UPSTREAM_COMMIT:0:8}" \
+            --body-file .pr-body.md \
+            --label "upstream-sync" \
+            --label "automated" \
+            --label "needs-manual-completion" \
+            --draft
+
+  notify-completion:
+    name: Notify Completion
+    runs-on: ubuntu-latest
+    needs: [check-upstream, create-pull-request]
+    if: always()
+
+    steps:
+      - name: Send notification
+        env:
+          HAS_UPDATES: ${{ needs.check-upstream.outputs.has_updates }}
+        run: |
+          if [ "$HAS_UPDATES" == "true" ]; then
+            echo "✅ Upstream sync PR created successfully"
+            echo "⚠️ Manual steps required - see PR description"
+          else
+            echo "ℹ️ No upstream updates detected"
+          fi

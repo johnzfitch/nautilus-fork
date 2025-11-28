@@ -1,6 +1,7 @@
 build/
 .*/
 !.gitlab/
+!.github/
 
 # Ignore meson's subprojects folder
 /subprojects
@@ -15,3 +16,6 @@ build/
 # Ignore captures
 /*.syscap
 /heaptrack.nautilus.*
+
+# Claude Code local notes
+CLAUDE.md

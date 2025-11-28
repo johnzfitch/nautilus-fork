@@ -3,6 +3,7 @@
 #include "nautilus-directory.h"
 #include "nautilus-file.h"
 #include "nautilus-global-preferences.h"
+#include "nautilus-thumbnails.h"
 #include "nautilus-view-item.h"
 
 /**
@@ -618,6 +619,23 @@ nautilus_view_model_remove_items (NautilusViewModel *self,
 void
 nautilus_view_model_remove_all_items (NautilusViewModel *self)
 {
+    GHashTableIter iter;
+    gpointer key;
+
+    /* Cancel pending thumbnail operations for all items before removing.
+     * This prevents callbacks from firing after the items and their
+     * associated cells are destroyed, which could cause use-after-free. */
+    if (self->map_files_to_model != NULL)
+    {
+        g_hash_table_iter_init (&iter, self->map_files_to_model);
+        while (g_hash_table_iter_next (&iter, &key, NULL))
+        {
+            NautilusFile *file = NAUTILUS_FILE (key);
+            g_autofree gchar *uri = nautilus_file_get_uri (file);
+            nautilus_thumbnail_remove_from_queue (uri);
+        }
+    }
+
     g_list_store_remove_all (G_LIST_STORE (gtk_filter_list_model_get_model (self->root_filter_model)));
     g_hash_table_remove_all (self->map_files_to_model);
     g_hash_table_remove_all (self->directory_reverse_map);

@@ -52,6 +52,8 @@
         "thumbnails_row"
 #define NAUTILUS_PREFERENCES_DIALOG_COUNT_ROW                       \
         "count_row"
+#define NAUTILUS_PREFERENCES_DIALOG_SEARCH_RESULTS_LIMIT_ROW        \
+        "search_results_limit_row"
 
 static const char * const speed_tradeoff_values[] =
 {
@@ -248,6 +250,38 @@ bind_builder_bool (GtkBuilder *builder,
                      "active", G_SETTINGS_BIND_DEFAULT);
 }
 
+static GVariant *
+spin_row_mapping_set (const GValue       *gvalue,
+                      const GVariantType *expected_type,
+                      gpointer            user_data)
+{
+    return g_variant_new_uint32 ((guint32) g_value_get_double (gvalue));
+}
+
+static gboolean
+spin_row_mapping_get (GValue   *gvalue,
+                      GVariant *variant,
+                      gpointer  user_data)
+{
+    g_value_set_double (gvalue, (gdouble) g_variant_get_uint32 (variant));
+    return TRUE;
+}
+
+static void
+bind_builder_spin_row (GtkBuilder *builder,
+                       GSettings  *settings,
+                       const char *widget_name,
+                       const char *prefs)
+{
+    GtkWidget *spin_row = GTK_WIDGET (gtk_builder_get_object (builder, widget_name));
+    GtkAdjustment *adjustment = adw_spin_row_get_adjustment (ADW_SPIN_ROW (spin_row));
+
+    g_settings_bind_with_mapping (settings, prefs, adjustment,
+                                  "value", G_SETTINGS_BIND_DEFAULT,
+                                  spin_row_mapping_get, spin_row_mapping_set,
+                                  NULL, NULL);
+}
+
 /* Translators: Both %s will be replaced with formatted timestamps. */
 #define DATE_FORMAT_ROW_SUBTITLE _("Examples: “%s”, “%s”")
 
@@ -380,6 +414,10 @@ nautilus_preferences_dialog_setup (GtkBuilder *builder)
                             NAUTILUS_PREFERENCES_DIALOG_COUNT_ROW,
                             NAUTILUS_PREFERENCES_SHOW_DIRECTORY_ITEM_COUNTS,
                             (const char **) speed_tradeoff_values);
+
+    bind_builder_spin_row (builder, nautilus_preferences,
+                           NAUTILUS_PREFERENCES_DIALOG_SEARCH_RESULTS_LIMIT_ROW,
+                           NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
 
     nautilus_preferences_dialog_setup_icon_caption_page (builder);
 }

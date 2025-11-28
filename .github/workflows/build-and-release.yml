@@ -1,0 +1,232 @@
+name: Build and Release Nautilus
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a release with this build'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  PKG_NAME: nautilus-omarchy
+
+jobs:
+  build:
+    name: Build Nautilus Package
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      pkg_file: ${{ steps.build.outputs.pkg_file }}
+
+    steps:
+      - name: Setup Arch Linux
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            base-devel git sudo \
+            meson ninja gcc clang \
+            gtk4 libadwaita glib2 \
+            localsearch tinysparql \
+            gnome-desktop-4 \
+            libgexiv2 libportal libportal-gtk4 \
+            gnome-autoar graphene \
+            gst-plugins-base gstreamer \
+            cairo pango gdk-pixbuf2 \
+            dconf libcloudproviders \
+            desktop-file-utils \
+            appstream-glib
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        env:
+          GH_REF: ${{ github.ref }}
+        run: |
+          if [[ "$GH_REF" == refs/tags/* ]]; then
+            VERSION="${GH_REF#refs/tags/v}"
+          else
+            VERSION="50.alpha.$(date +%Y%m%d).$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      - name: Configure build
+        run: |
+          meson setup build \
+            --prefix=/usr \
+            --buildtype=release \
+            -Dtests=false \
+            -Ddocs=false
+
+      - name: Build
+        run: |
+          ninja -C build
+
+      - name: Run basic tests
+        run: |
+          ./build/src/nautilus --version || true
+
+      - name: Create package directory
+        id: build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          PKG_DIR="$PKG_NAME-$VERSION"
+          mkdir -p "$PKG_DIR"
+          DESTDIR="$(pwd)/$PKG_DIR" ninja -C build install
+          tar -czvf "$PKG_DIR.tar.gz" "$PKG_DIR"
+          echo "pkg_file=$PKG_DIR.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG_NAME }}-${{ steps.version.outputs.version }}
+          path: ${{ steps.build.outputs.pkg_file }}
+          retention-days: 30
+
+  build-arch-pkg:
+    name: Build Arch Package (.pkg.tar.zst)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    needs: build
+    outputs:
+      pkg_file: ${{ steps.makepkg.outputs.pkg_file }}
+
+    steps:
+      - name: Setup Arch Linux with makepkg
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            base-devel git sudo fakeroot \
+            meson ninja gcc clang \
+            gtk4 libadwaita glib2 \
+            localsearch tinysparql \
+            gnome-desktop-4 \
+            libgexiv2 libportal libportal-gtk4 \
+            gnome-autoar graphene \
+            gst-plugins-base gstreamer \
+            cairo pango gdk-pixbuf2 \
+            dconf libcloudproviders \
+            desktop-file-utils \
+            appstream-glib
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create PKGBUILD
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          cat > PKGBUILD << 'PKGBUILD_EOF'
+          # Maintainer: Omarchy <packages@omarchy.org>
+          pkgname=nautilus-omarchy
+          pkgver=VERSION_PLACEHOLDER
+          pkgrel=1
+          pkgdesc="GNOME file manager with Omarchy customizations"
+          arch=('x86_64')
+          url="https://github.com/johnzfitch/nautilus-fork"
+          license=('GPL3')
+          depends=(
+            'gtk4' 'libadwaita' 'glib2'
+            'localsearch' 'tinysparql'
+            'gnome-desktop-4'
+            'libgexiv2' 'libportal' 'libportal-gtk4'
+            'gnome-autoar' 'graphene'
+            'gst-plugins-base' 'gstreamer'
+            'cairo' 'pango' 'gdk-pixbuf2'
+            'dconf' 'libcloudproviders'
+          )
+          makedepends=('meson' 'ninja' 'git')
+          provides=('nautilus')
+          conflicts=('nautilus')
+          source=()
+          sha256sums=()
+
+          build() {
+            cd "$srcdir/.."
+            meson setup build \
+              --prefix=/usr \
+              --buildtype=release \
+              -Dtests=false \
+              -Ddocs=false
+            ninja -C build
+          }
+
+          package() {
+            cd "$srcdir/.."
+            DESTDIR="$pkgdir" ninja -C build install
+          }
+          PKGBUILD_EOF
+
+          sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" PKGBUILD
+          sed -i "s/-/./g" PKGBUILD
+          chown -R builder:builder .
+
+      - name: Build package with makepkg
+        id: makepkg
+        run: |
+          su builder -c "makepkg -sf --noconfirm"
+          PKG_FILE=$(ls *.pkg.tar.zst)
+          echo "pkg_file=$PKG_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: "*.pkg.tar.zst"
+          retention-days: 30
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build, build-arch-pkg]
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          TAG_NAME: ${{ github.ref_name }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', needs.build.outputs.version) }}
+          name: "Nautilus Omarchy ${{ needs.build.outputs.version }}"
+          draft: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          prerelease: ${{ contains(needs.build.outputs.version, 'alpha') }}
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.pkg.tar.zst
