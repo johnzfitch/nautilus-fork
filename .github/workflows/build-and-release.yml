@@ -32,9 +32,14 @@ jobs:
       pkg_file: ${{ steps.build.outputs.pkg_file }}
 
     steps:
+      - name: Initialize pacman keyring
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm
+
       - name: Setup Arch Linux
         run: |
-          pacman -Syu --noconfirm
           pacman -S --noconfirm --needed \
             base-devel git sudo \
             meson ninja gcc clang \
@@ -49,10 +54,19 @@ jobs:
             desktop-file-utils \
             appstream-glib
 
+      - name: Reload system configuration
+        run: |
+          systemctl daemon-reexec || true
+          systemd-tmpfiles --create
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Mark Git directory as safe
+        run: |
+          git config --global --add safe.directory /__w/nautilus-fork/nautilus-fork
 
       - name: Determine version
         id: version
@@ -111,9 +125,14 @@ jobs:
       pkg_file: ${{ steps.makepkg.outputs.pkg_file }}
 
     steps:
+      - name: Initialize pacman keyring
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm
+
       - name: Setup Arch Linux with makepkg
         run: |
-          pacman -Syu --noconfirm
           pacman -S --noconfirm --needed \
             base-devel git sudo fakeroot \
             meson ninja gcc clang \
@@ -130,10 +149,19 @@ jobs:
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
+      - name: Reload system configuration
+        run: |
+          systemctl daemon-reexec || true
+          systemd-tmpfiles --create
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Mark Git directory as safe
+        run: |
+          git config --global --add safe.directory /__w/nautilus-fork/nautilus-fork
 
       - name: Create PKGBUILD
         env:
