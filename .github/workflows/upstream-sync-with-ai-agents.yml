@@ -135,9 +135,9 @@ jobs:
             printf '4. Update documentation\n'
             printf '5. Commit and push\n\n'
             printf '## Custom Features to Preserve\n\n'
-            printf '- Animated WebP/GIF/APNG thumbnails\n'
-            printf '- Search-cache integration\n'
-            printf '- FUSE mount detection\n'
+            printf '%s\n' '- Animated WebP/GIF/APNG thumbnails'
+            printf '%s\n' '- Search-cache integration'
+            printf '%s\n' '- FUSE mount detection'
           } > .claude-task.md
 
       - name: Commit and push
@@ -162,8 +162,8 @@ jobs:
           {
             printf '## Automated Upstream Sync\n\n'
             printf 'Merging upstream GNOME Nautilus changes.\n\n'
-            printf '- Upstream: %s\n' "${UPSTREAM_COMMIT:0:8}"
-            printf '- Current: %s\n\n' "${CURRENT_COMMIT:0:8}"
+            printf '%s\n' "- Upstream: ${UPSTREAM_COMMIT:0:8}"
+            printf '%s\n\n' "- Current: ${CURRENT_COMMIT:0:8}"
             printf '### AI Tasks\n\n'
             printf '1. Review spec: %s\n' "$SPEC_FILE"
             printf '2. Run Claude: claude --prompt "$(cat .claude-task.md)"\n'
