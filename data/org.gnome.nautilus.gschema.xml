@@ -47,8 +47,6 @@
     <value value="2" nick="medium"/>
     <value value="3" nick="large"/>
     <value value="4" nick="extra-large"/>
-    <value value="5" nick="huge"/>
-    <value value="6" nick="gigantic"/>
   </enum>
 
   <enum id="org.gnome.nautilus.ListZoomLevel">
@@ -206,11 +204,6 @@
       <default>1000</default>
       <summary>Maximum search results per provider</summary>
       <description>Maximum number of search results returned from each search provider. Lower values improve performance and stability. Set to 0 for unlimited (not recommended for large indexed directories).</description>
-    </key>
-    <key type="as" name="search-blacklist">
-      <default>[]</default>
-      <summary>Directories to exclude from recursive search</summary>
-      <description>List of directory patterns to skip during recursive search. Patterns support wildcards (e.g., '/home/*/node_modules', '/home/*/.cache'). These directories can still be searched FROM directly, but won't be scanned when searching from parent directories. Useful for large directories like build outputs, caches, or media libraries.</description>
     </key>
     <key type="b" name="search-show-hidden-files">
       <default>true</default>

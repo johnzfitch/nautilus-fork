@@ -38,33 +38,6 @@
 #define CREATE_THREAD_DELAY_MS 500
 #define FUSE_MOUNT_CHECK_TIMEOUT_MS 1000
 
-static gboolean
-is_directory_blacklisted (GFile *dir)
-{
-    g_autofree char *path = g_file_get_path (dir);
-    g_auto (GStrv) blacklist_patterns = NULL;
-
-    if (path == NULL)
-    {
-        return FALSE;
-    }
-
-    /* Read blacklist patterns from GSettings */
-    blacklist_patterns = g_settings_get_strv (nautilus_preferences,
-                                              NAUTILUS_PREFERENCES_SEARCH_BLACKLIST);
-
-    /* Check if path matches any blacklist pattern (supports glob wildcards) */
-    for (int i = 0; blacklist_patterns[i] != NULL; i++)
-    {
-        if (g_pattern_match_simple (blacklist_patterns[i], path))
-        {
-            return TRUE;
-        }
-    }
-
-    return FALSE;
-}
-
 typedef struct
 {
     NautilusSearchEngineSimple *engine;
@@ -76,7 +49,6 @@ typedef struct
     GQueue *directories;     /* GFiles */
 
     GHashTable *visited;
-    GHashTable *depth_map;   /* Track depth of each directory for depth-limited search */
 
     gint n_processed_files;
     GPtrArray *hits;
@@ -87,7 +59,6 @@ typedef struct
     gboolean results_truncated;
 
     NautilusQuery *query;
-    GFile *search_root;      /* Initial search location (never blacklist this) */
     gint processing_id;
     GMutex idle_mutex;
     /* The following data can be accessed from different threads
@@ -136,9 +107,7 @@ search_thread_data_new (NautilusSearchEngineSimple *engine,
     data->engine = g_object_ref (engine);
     data->directories = g_queue_new ();
     data->visited = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
-    data->depth_map = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
     data->query = g_object_ref (query);
-    data->search_root = nautilus_query_get_location (query);
     data->mime_types = nautilus_query_get_mime_types (query);
 
     data->cancellable = g_cancellable_new ();
@@ -152,16 +121,6 @@ search_thread_data_new (NautilusSearchEngineSimple *engine,
     g_mutex_init (&data->idle_mutex);
     data->idle_queue = g_queue_new ();
 
-    /* Set initial depth for search root */
-    if (data->search_root != NULL)
-    {
-        g_autofree char *root_path = g_file_get_path (data->search_root);
-        if (root_path != NULL)
-        {
-            g_hash_table_insert (data->depth_map, g_strdup (root_path), g_memdup (&(gint){0}, sizeof(gint)));
-        }
-    }
-
     return data;
 }
 
@@ -172,10 +131,8 @@ search_thread_data_free (SearchThreadData *data)
                      (GFunc) g_object_unref, NULL);
     g_queue_free (data->directories);
     g_hash_table_destroy (data->visited);
-    g_hash_table_destroy (data->depth_map);
     g_object_unref (data->cancellable);
     g_object_unref (data->query);
-    g_clear_object (&data->search_root);
     g_clear_pointer (&data->mime_types, g_ptr_array_unref);
     g_clear_pointer (&data->hits, g_ptr_array_unref);
     g_object_unref (data->engine);
@@ -345,15 +302,6 @@ visit_directory (GFile            *dir,
     GDateTime *initial_date;
     GDateTime *end_date;
     gchar *uri;
-
-    /* Skip blacklisted directories (performance/privacy)
-     * EXCEPT the search root - always allow searching within the current location */
-    if (is_directory_blacklisted (dir) && !g_file_equal (dir, data->search_root))
-    {
-        g_autofree char *dir_path = g_file_get_path (dir);
-        g_debug ("Skipping blacklisted directory: %s", dir_path);
-        return;
-    }
 
     /* Check for stale FUSE mounts before attempting enumeration.
      * This prevents hanging indefinitely on disconnected SSHFS mounts. */
@@ -551,22 +499,6 @@ visit_directory (GFile            *dir,
 
         if (recursive)
         {
-            /* Check depth limits for blacklisted directories */
-            g_autofree char *current_path = g_file_get_path (dir);
-            gint *current_depth_ptr = g_hash_table_lookup (data->depth_map, current_path);
-            gint current_depth = current_depth_ptr ? *current_depth_ptr : 0;
-
-            /* Check if we're in a blacklisted directory (but not the root) */
-            gboolean in_blacklisted = is_directory_blacklisted (dir) &&
-                                      !g_file_equal (dir, data->search_root);
-
-            /* If blacklisted, only allow one level of recursion (show folders, not their contents) */
-            if (in_blacklisted && current_depth >= 1)
-            {
-                /* Skip this directory - we're already one level deep in blacklisted dir */
-                goto next;
-            }
-
             id = g_file_info_get_attribute_string (info, G_FILE_ATTRIBUTE_ID_FILE);
             visited = FALSE;
             if (id)
@@ -584,15 +516,6 @@ visit_directory (GFile            *dir,
 
             if (!visited)
             {
-                /* Store child depth for next iteration */
-                g_autofree char *child_path = g_file_get_path (child);
-                if (child_path != NULL)
-                {
-                    gint *child_depth = g_new (gint, 1);
-                    *child_depth = current_depth + 1;
-                    g_hash_table_insert (data->depth_map, g_strdup (child_path), child_depth);
-                }
-
                 g_queue_push_tail (data->directories, g_object_ref (child));
             }
         }
