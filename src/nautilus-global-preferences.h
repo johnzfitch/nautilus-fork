@@ -129,6 +129,9 @@ typedef enum
 /* Search results limit per provider */
 #define NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT "search-results-limit"
 
+/* Directory patterns to exclude from recursive search */
+#define NAUTILUS_PREFERENCES_SEARCH_BLACKLIST "search-blacklist"
+
 /* Show hidden files in search results */
 #define NAUTILUS_PREFERENCES_SEARCH_SHOW_HIDDEN_FILES "search-show-hidden-files"
 
