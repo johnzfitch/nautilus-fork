@@ -129,6 +129,9 @@ typedef enum
 /* Search results limit per provider */
 #define NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT "search-results-limit"
 
+/* Show hidden files in search results */
+#define NAUTILUS_PREFERENCES_SEARCH_SHOW_HIDDEN_FILES "search-show-hidden-files"
+
 /* Gtk settings migration happened */
 #define NAUTILUS_PREFERENCES_MIGRATED_GTK_SETTINGS "migrated-gtk-settings"
 

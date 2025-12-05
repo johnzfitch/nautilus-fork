@@ -45,6 +45,13 @@
                 <property name="use_underline">True</property>
               </object>
             </child>
+            <child>
+              <object class="AdwSwitchRow" id="show_hidden_files_row">
+                <property name="title" translatable="yes">Show _Hidden Files</property>
+                <property name="subtitle" translatable="yes">Show files starting with a dot (Ctrl+H)</property>
+                <property name="use_underline">True</property>
+              </object>
+            </child>
           </object>
         </child>
         <child>
@@ -74,6 +81,13 @@
               </object>
             </child>
             <child>
+              <object class="AdwSwitchRow" id="search_show_hidden_files_row">
+                <property name="title" translatable="yes">Show _Hidden Files in Search</property>
+                <property name="subtitle" translatable="yes">Include hidden files (starting with a dot) in search results</property>
+                <property name="use_underline">True</property>
+              </object>
+            </child>
+            <child>
               <object class="AdwComboRow" id="thumbnails_row">
                 <property name="title" translatable="yes">Show _Thumbnails</property>
                 <property name="use_underline">True</property>
@@ -83,6 +97,30 @@
               <object class="AdwComboRow" id="count_row">
                 <property name="title" translatable="yes">_Count Number of Files in Folders</property>
                 <property name="use_underline">True</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup" id="search_cache_group">
+            <property name="title" translatable="yes">Search Cache Directories</property>
+            <property name="description" translatable="yes">Directories indexed for fast search. Changes require rebuilding the index.</property>
+            <child>
+              <object class="GtkListBox" id="search_cache_dirs_listbox">
+                <property name="selection-mode">none</property>
+                <style>
+                  <class name="boxed-list"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="search_cache_add_button">
+                <property name="label" translatable="yes">Add Directory…</property>
+                <property name="halign">start</property>
+                <property name="margin-top">12</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
               </object>
             </child>
           </object>
