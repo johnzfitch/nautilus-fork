@@ -17,22 +17,22 @@
             <property name="halign">fill</property>
             <property name="valign">center</property>
             <child>
-              <object class="GtkBox" id="fixed_height_box">
-                <property name="orientation">vertical</property>
-                <property name="halign">center</property>
-                <property name="height-request">16</property>
+              <object class="GtkCenterBox" id="fixed_height_box">
                 <property name="valign">center</property>
-                <child>
-                  <object class="GtkPicture" id="icon">
-                    <property name="halign">center</property>
+                <binding name="width-request">
+                  <lookup name="icon-size">NautilusNameCell</lookup>
+                </binding>
+                <binding name="height-request">
+                  <lookup name="icon-size">NautilusNameCell</lookup>
+                </binding>
+                <property name="center-widget">
+                  <object class="NautilusImage" id="icon">
                     <property name="valign">center</property>
-                    <property name="can-shrink">False</property>
-                    <property name="content-fit">cover</property>
                     <accessibility>
                       <relation name="labelled-by">label</relation>
                     </accessibility>
                   </object>
-                </child>
+                </property>
               </object>
             </child>
             <child>
@@ -46,75 +46,47 @@
                 </style>
                 <child>
                   <object class="GtkBox">
-                    <property name="orientation">vertical</property>
+                    <property name="orientation">horizontal</property>
                     <property name="halign">fill</property>
                     <property name="hexpand">True</property>
-                    <property name="spacing">0</property>
+                    <property name="spacing">6</property>
                     <child>
-                      <object class="GtkBox">
-                        <property name="orientation">horizontal</property>
-                        <property name="halign">fill</property>
-                        <property name="hexpand">True</property>
-                        <property name="spacing">6</property>
-                        <child>
-                          <object class="GtkLabel" id="label">
-                            <property name="ellipsize">middle</property>
-                            <property name="lines">1</property>
-                            <property name="max-width-chars">-1</property>
-                            <property name="wrap">False</property>
-                            <property name="wrap-mode">word-char</property>
-                            <property name="halign">start</property>
-                            <property name="has-tooltip">true</property>
-                            <signal name="query-tooltip" handler="on_label_query_tooltip"/>
-                            <binding name="label">
-                              <lookup name="display-name">
-                                <lookup name="file">
-                                  <lookup name="item">NautilusNameCell</lookup>
-                                </lookup>
-                              </lookup>
-                            </binding>
-                            <attributes>
-                              <attribute name="insert-hyphens" value="false"/>
-                            </attributes>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkBox" id="emblems_box">
-                            <property name="orientation">horizontal</property>
-                            <property name="halign">start</property>
-                            <property name="spacing">6</property>
-                            <style>
-                              <class name="dim-label"/>
-                            </style>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwSpinner" id="spinner">
-                            <property name="visible">False</property>
-                            <property name="halign">center</property>
-                            <property name="valign">center</property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="location_shadow">
-                        <property name="visible">False</property>
-                        <property name="ellipsize">start</property>
+                      <object class="GtkLabel" id="label">
+                        <property name="ellipsize">middle</property>
                         <property name="lines">1</property>
                         <property name="max-width-chars">-1</property>
                         <property name="wrap">False</property>
+                        <property name="wrap-mode">word-char</property>
                         <property name="halign">start</property>
-                        <property name="xalign">0.0</property>
                         <property name="has-tooltip">true</property>
                         <signal name="query-tooltip" handler="on_label_query_tooltip"/>
+                        <binding name="label">
+                          <lookup name="display-name">
+                            <lookup name="file">
+                              <lookup name="item">NautilusNameCell</lookup>
+                            </lookup>
+                          </lookup>
+                        </binding>
                         <attributes>
                           <attribute name="insert-hyphens" value="false"/>
                         </attributes>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox" id="emblems_box">
+                        <property name="orientation">horizontal</property>
+                        <property name="halign">start</property>
+                        <property name="spacing">6</property>
                         <style>
-                          <class name="location-shadow"/>
-                          <class name="caption"/>
+                          <class name="dim-label"/>
                         </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwSpinner" id="spinner">
+                        <property name="visible">False</property>
+                        <property name="halign">center</property>
+                        <property name="valign">center</property>
                       </object>
                     </child>
                   </object>

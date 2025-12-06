@@ -8,10 +8,12 @@
 #include <test-utilities.h>
 
 #include <nautilus-application.h>
+#include <nautilus-enums.h>
 #include <nautilus-file.h>
 #include <nautilus-file-utilities.h>
 #include <nautilus-files-view.h>
 #include <nautilus-global-preferences.h>
+#include <nautilus-list-base.h>
 #include <nautilus-resources.h>
 #include <nautilus-tag-manager.h>
 #include <nautilus-view-info.h>
@@ -99,6 +101,100 @@ file_changes_done (NautilusFilesView *view,
     *end_of_changes = TRUE;
 }
 
+static void
+run_view_zoom_testcase (GSettings   *view_setting,
+                        const gchar *zoom_setting_key,
+                        uint         default_zoom_level,
+                        uint         view_id)
+{
+    g_settings_set_enum (view_setting, zoom_setting_key, default_zoom_level);
+
+    g_autoptr (NautilusWindowSlot) slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
+    g_autoptr (NautilusFilesView) files_view = nautilus_files_view_new (view_id, slot);
+    g_autoptr (GFile) tmp_location = g_file_new_for_path (test_get_tmp_dir ());
+    NautilusListBase *list_base = nautilus_files_view_get_private_list_base (files_view);
+    NautilusViewInfo view_info = nautilus_list_base_get_view_info (list_base);
+    const guint file_count = 10;
+
+    create_multiple_files ("zoom_test", file_count);
+
+    nautilus_files_view_set_location (files_view, tmp_location);
+    ITER_CONTEXT_WHILE (nautilus_files_view_get_loading (files_view));
+
+    GActionGroup *group = nautilus_files_view_get_private_action_group (files_view);
+    GAction *action_zoom_in = g_action_map_lookup_action (G_ACTION_MAP (group), "zoom-in");
+    GAction *action_zoom_out = g_action_map_lookup_action (G_ACTION_MAP (group), "zoom-out");
+    GAction *action_zoom_standard = g_action_map_lookup_action (G_ACTION_MAP (group),
+                                                                "zoom-standard");
+
+    /* Zoom in until we reach the max (action becomes disabled) */
+    while (g_action_get_enabled (action_zoom_in))
+    {
+        gtk_widget_activate_action (GTK_WIDGET (files_view), "view.zoom-in", NULL);
+        g_assert_true (g_action_get_enabled (action_zoom_out));
+    }
+    g_assert_true (g_action_get_enabled (action_zoom_standard));
+    g_assert_cmpint (g_settings_get_enum (view_setting, zoom_setting_key),
+                     ==,
+                     view_info.zoom_level_max);
+
+    /* Zoom out until we reach the max (action becomes disabled) */
+    while (g_action_get_enabled (action_zoom_out))
+    {
+        gtk_widget_activate_action (GTK_WIDGET (files_view), "view.zoom-out", NULL);
+        g_assert_true (g_action_get_enabled (action_zoom_in));
+    }
+    g_assert_true (g_action_get_enabled (action_zoom_standard));
+    g_assert_cmpint (g_settings_get_enum (view_setting, zoom_setting_key),
+                     ==,
+                     view_info.zoom_level_min);
+
+    /* Now set to standard and ensure the standard action becomes disabled */
+    gtk_widget_activate_action (GTK_WIDGET (files_view), "view.zoom-standard", NULL);
+    g_assert_true (g_action_get_enabled (action_zoom_in));
+    g_assert_true (g_action_get_enabled (action_zoom_out));
+    g_assert_false (g_action_get_enabled (action_zoom_standard));
+    g_assert_cmpint (g_settings_get_enum (view_setting, zoom_setting_key),
+                     ==,
+                     view_info.zoom_level_standard);
+
+    test_clear_tmp_dir ();
+}
+
+static void
+test_zoom_actions (void)
+{
+    struct
+    {
+        GSettings *view_setting;
+        const gchar *zoom_setting_key;
+        uint default_zoom_level;
+        uint view_id;
+    } testcases[] =
+    {
+        {
+            nautilus_list_view_preferences,
+            NAUTILUS_PREFERENCES_LIST_VIEW_DEFAULT_ZOOM_LEVEL,
+            NAUTILUS_LIST_ZOOM_LEVEL_MEDIUM,
+            NAUTILUS_VIEW_LIST_ID,
+        },
+        {
+            nautilus_icon_view_preferences,
+            NAUTILUS_PREFERENCES_ICON_VIEW_DEFAULT_ZOOM_LEVEL,
+            NAUTILUS_GRID_ZOOM_LEVEL_MEDIUM,
+            NAUTILUS_VIEW_GRID_ID,
+        },
+    };
+
+    for (uint i = 0; i < G_N_ELEMENTS (testcases); i++)
+    {
+        run_view_zoom_testcase (testcases[i].view_setting,
+                                testcases[i].zoom_setting_key,
+                                testcases[i].default_zoom_level,
+                                testcases[i].view_id);
+    }
+}
+
 const GStrv hidden_files_hierarchy = (char *[])
 {
     "my_file",
@@ -113,6 +209,87 @@ const GStrv hidden_files_hierarchy = (char *[])
     ".hidden",
     NULL
 };
+
+static void
+test_selection_actions (void)
+{
+    g_autoptr (NautilusWindowSlot) slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
+    g_autoptr (NautilusFilesView) files_view = nautilus_files_view_new (NAUTILUS_VIEW_GRID_ID, slot);
+    NautilusViewModel *model = nautilus_files_view_get_private_model (files_view);
+    g_autoptr (GFile) tmp_location = g_file_new_for_path (test_get_tmp_dir ());
+    const guint file_count = 10, selected_count = 4;
+    g_autoptr (NautilusFileList) selection_set = NULL;
+    NautilusFileList *got_selection = NULL;
+    guint got_count;
+
+    /* Need to subtract one since it creates an extra directory. */
+    create_multiple_files ("select_test", file_count - 1);
+
+    nautilus_files_view_set_location (files_view, tmp_location);
+    ITER_CONTEXT_WHILE (nautilus_files_view_get_loading (files_view));
+
+    for (guint i = 0; i < selected_count; i++)
+    {
+        g_autofree gchar *name = g_strdup_printf ("select_test_file_%u", i);
+        g_autoptr (GFile) location = g_file_get_child (tmp_location, name);
+        g_autoptr (NautilusFile) file = nautilus_file_get (location);
+
+        selection_set = g_list_append (selection_set, nautilus_file_ref (file));
+    }
+
+    /* Set the selection on the view */
+    nautilus_files_view_set_selection (files_view, selection_set);
+
+    /* Retrieve selection and verify it matches what we set */
+    got_selection = nautilus_files_view_get_selection (files_view);
+    got_count = g_list_length (got_selection);
+
+    g_assert_cmpint (got_count, ==, selected_count);
+
+    for (NautilusFileList *l = got_selection; l != NULL; l = l->next)
+    {
+        NautilusFile *file = l->data;
+        NautilusViewItem *item = nautilus_view_model_get_item_for_file (model, file);
+
+        g_assert_nonnull (item);
+        g_assert_nonnull (g_list_find (selection_set, file));
+    }
+    g_clear_pointer (&got_selection, nautilus_file_list_free);
+
+    /* Invert selection */
+    gtk_widget_activate_action (GTK_WIDGET (files_view), "view.invert-selection", NULL);
+    got_selection = nautilus_files_view_get_selection (files_view);
+    got_count = g_list_length (got_selection);
+
+    g_assert_cmpint (got_count, ==, file_count - selected_count);
+
+    for (NautilusFileList *l = got_selection; l != NULL; l = l->next)
+    {
+        NautilusFile *file = l->data;
+        NautilusViewItem *item = nautilus_view_model_get_item_for_file (model, file);
+
+        g_assert_nonnull (item);
+        g_assert_null (g_list_find (selection_set, file));
+    }
+    g_clear_pointer (&got_selection, nautilus_file_list_free);
+
+    /* Select all */
+    gtk_widget_activate_action (GTK_WIDGET (files_view), "view.select-all", NULL);
+    got_selection = nautilus_files_view_get_selection (files_view);
+    got_count = g_list_length (got_selection);
+
+    g_assert_cmpint (got_count, ==, file_count);
+    g_assert_cmpint (got_count, ==, g_list_model_get_n_items (G_LIST_MODEL (model)));
+    g_clear_pointer (&got_selection, nautilus_file_list_free);
+
+    /* Invert selection to clear selection. */
+    gtk_widget_activate_action (GTK_WIDGET (files_view), "view.invert-selection", NULL);
+    got_selection = nautilus_files_view_get_selection (files_view);
+    g_assert_null (got_selection);
+    g_clear_pointer (&got_selection, nautilus_file_list_free);
+
+    test_clear_tmp_dir ();
+}
 
 static void
 create_hidden_files (void)
@@ -139,13 +316,80 @@ create_hidden_files (void)
 }
 
 static void
+test_hidden_files_renamed (void)
+{
+    g_settings_set_boolean (gtk_filechooser_preferences,
+                            NAUTILUS_PREFERENCES_SHOW_HIDDEN_FILES,
+                            FALSE);
+
+    g_autoptr (NautilusWindowSlot) slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
+    g_autoptr (NautilusFilesView) files_view = nautilus_files_view_new (NAUTILUS_VIEW_GRID_ID, slot);
+    NautilusViewModel *model = nautilus_files_view_get_private_model (files_view);
+    g_autoptr (GFile) tmp_location = g_file_new_for_path (test_get_tmp_dir ());
+    const guint renamed_file_count = 4;
+    g_autoptr (GPtrArray) renamed_files_arr = g_ptr_array_new_full (renamed_file_count,
+                                                                    (GDestroyNotify) nautilus_file_unref);
+    g_autoptr (GPtrArray) changed_files_arr = g_ptr_array_new_full (renamed_file_count,
+                                                                    (GDestroyNotify) nautilus_file_unref);
+
+    create_hidden_files ();
+
+    /* Load the directory with hidden files not shown. */
+    nautilus_files_view_set_location (NAUTILUS_FILES_VIEW (files_view), tmp_location);
+    ITER_CONTEXT_WHILE (nautilus_files_view_get_loading (files_view));
+
+    /* Rename a few hidden files to visible names and verify they appear. */
+    g_signal_connect (files_view, "file-changed",
+                      G_CALLBACK (collect_changed_files), changed_files_arr);
+
+    for (guint i = 0, renamed = 0; hidden_files_hierarchy[i] != NULL && renamed < renamed_file_count; i++)
+    {
+        const gchar *orig_name = hidden_files_hierarchy[i];
+
+        /* Only pick hidden entries */
+        if (strstr (orig_name, "hidden") == NULL)
+        {
+            continue;
+        }
+
+        g_autoptr (GFile) location = g_file_new_build_filename (test_get_tmp_dir (), orig_name, NULL);
+        g_autoptr (NautilusFile) file = nautilus_file_get (location);
+        NautilusViewItem *item = nautilus_view_model_get_item_for_file (model, file);
+        g_autofree gchar *new_name = g_strdup_printf ("renamed_visible_%u", renamed);
+
+        /* Ensure hidden files are not visible initially. */
+        g_assert_true (nautilus_file_is_hidden_file (file));
+        g_assert_null (item);
+
+        nautilus_file_rename (file, new_name, collect_renamed_files, renamed_files_arr);
+        renamed++;
+    }
+
+    ITER_CONTEXT_WHILE (changed_files_arr->len < renamed_file_count ||
+                        renamed_files_arr->len < renamed_file_count ||
+                        !ptr_array_is_subset (renamed_files_arr, changed_files_arr));
+
+    /* The renamed files should now be present in the view model. */
+    for (guint i = 0; i < renamed_files_arr->len; i++)
+    {
+        NautilusFile *file = renamed_files_arr->pdata[i];
+        NautilusViewItem *item = nautilus_view_model_get_item_for_file (model, file);
+
+        g_assert_false (nautilus_file_is_hidden_file (file));
+        g_assert_nonnull (item);
+    }
+
+    test_clear_tmp_dir ();
+}
+
+static void
 test_hidden_files_change (void)
 {
     g_settings_set_boolean (gtk_filechooser_preferences,
                             NAUTILUS_PREFERENCES_SHOW_HIDDEN_FILES,
                             FALSE);
 
-    g_autoptr (NautilusWindowSlot) slot = g_object_ref_sink (nautilus_window_slot_new (NAUTILUS_MODE_BROWSE));
+    g_autoptr (NautilusWindowSlot) slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
     g_autoptr (NautilusFilesView) files_view = nautilus_files_view_new (NAUTILUS_VIEW_GRID_ID, slot);
     NautilusViewModel *model = nautilus_files_view_get_private_model (files_view);
     g_autoptr (GFile) tmp_location = g_file_new_for_path (test_get_tmp_dir ());
@@ -229,7 +473,7 @@ test_replace_files (void)
                             NAUTILUS_PREFERENCES_SHOW_HIDDEN_FILES,
                             FALSE);
 
-    g_autoptr (NautilusWindowSlot) slot = g_object_ref_sink (nautilus_window_slot_new (NAUTILUS_MODE_BROWSE));
+    g_autoptr (NautilusWindowSlot) slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
     g_autoptr (NautilusFilesView) files_view = nautilus_files_view_new (NAUTILUS_VIEW_GRID_ID, slot);
     NautilusViewModel *model = nautilus_files_view_get_private_model (files_view);
     g_autoptr (GFile) tmp_location = g_file_new_for_path (test_get_tmp_dir ());
@@ -339,7 +583,7 @@ test_replace_files (void)
 static void
 test_rename_files (void)
 {
-    g_autoptr (NautilusWindowSlot) slot = g_object_ref_sink (nautilus_window_slot_new (NAUTILUS_MODE_BROWSE));
+    g_autoptr (NautilusWindowSlot) slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
     g_autoptr (NautilusFilesView) files_view = nautilus_files_view_new (NAUTILUS_VIEW_GRID_ID, slot);
     NautilusViewModel *model = nautilus_files_view_get_private_model (files_view);
     g_autoptr (GFile) tmp_location = g_file_new_for_path (test_get_tmp_dir ());
@@ -421,7 +665,7 @@ collect_removed_files_cb (NautilusFilesView *view,
 static void
 test_remove_files (void)
 {
-    g_autoptr (NautilusWindowSlot) slot = g_object_ref_sink (nautilus_window_slot_new (NAUTILUS_MODE_BROWSE));
+    g_autoptr (NautilusWindowSlot) slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
     g_autoptr (NautilusFilesView) files_view = nautilus_files_view_new (NAUTILUS_VIEW_GRID_ID, slot);
     NautilusViewModel *model = nautilus_files_view_get_private_model (files_view);
     g_autoptr (GFile) tmp_location = g_file_new_for_path (test_get_tmp_dir ());
@@ -505,7 +749,7 @@ collect_added_files_cb (NautilusFilesView *view,
 static void
 test_add_files (void)
 {
-    g_autoptr (NautilusWindowSlot) slot = g_object_ref_sink (nautilus_window_slot_new (NAUTILUS_MODE_BROWSE));
+    g_autoptr (NautilusWindowSlot) slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
     g_autoptr (NautilusFilesView) files_view = nautilus_files_view_new (NAUTILUS_VIEW_GRID_ID, slot);
     NautilusViewModel *model = nautilus_files_view_get_private_model (files_view);
     g_autoptr (GFile) tmp_location = g_file_new_for_path (test_get_tmp_dir ());
@@ -562,7 +806,7 @@ test_add_files (void)
 static void
 test_load_dir (void)
 {
-    g_autoptr (NautilusWindowSlot) slot = g_object_ref_sink (nautilus_window_slot_new (NAUTILUS_MODE_BROWSE));
+    g_autoptr (NautilusWindowSlot) slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
     g_autoptr (NautilusFilesView) files_view = nautilus_files_view_new (NAUTILUS_VIEW_GRID_ID, slot);
     NautilusViewModel *model = nautilus_files_view_get_private_model (files_view);
     g_autoptr (GFile) tmp_location = g_file_new_for_path (test_get_tmp_dir ());
@@ -643,6 +887,12 @@ main (int   argc,
                      test_replace_files);
     g_test_add_func ("/view/hidden_files/change",
                      test_hidden_files_change);
+    g_test_add_func ("/view/hidden_files/rename_files",
+                     test_hidden_files_renamed);
+    g_test_add_func ("/view/selection/actions",
+                     test_selection_actions);
+    g_test_add_func ("/view/actions/zoom",
+                     test_zoom_actions);
 
     return g_test_run ();
 }

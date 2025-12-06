@@ -45,7 +45,7 @@ enum
     PROP_0,
     PROP_ICON_NAME,
     PROP_PROGRESS,
-    PROP_STATUS,
+    PROP_SHORT_STATUS,
     N_PROPS
 };
 
@@ -61,6 +61,7 @@ struct _NautilusProgressInfo
     GTimer *progress_timer;
 
     char *status;
+    char *short_status;
     char *details;
     double progress;
     gdouble remaining_time;
@@ -78,6 +79,7 @@ struct _NautilusProgressInfo
     gboolean cancel_at_idle;
     gboolean changed_at_idle;
     gboolean progress_at_idle;
+    gboolean status_at_idle;
 
     GFile *destination;
 };
@@ -88,8 +90,6 @@ G_DEFINE_TYPE (NautilusProgressInfo, nautilus_progress_info, G_TYPE_OBJECT)
 
 static void set_details (NautilusProgressInfo *info,
                          const char           *details);
-static void set_status (NautilusProgressInfo *info,
-                        const char           *status);
 static const char * get_icon_name (NautilusProgressInfo *info);
 
 static void
@@ -99,6 +99,7 @@ nautilus_progress_info_finalize (GObject *object)
 
     info = NAUTILUS_PROGRESS_INFO (object);
 
+    g_free (info->short_status);
     g_free (info->status);
     g_free (info->details);
     g_clear_pointer (&info->progress_timer, g_timer_destroy);
@@ -161,9 +162,9 @@ nautilus_progress_info_get_property (GObject    *object,
         }
         break;
 
-        case (PROP_STATUS):
+        case (PROP_SHORT_STATUS):
         {
-            g_value_take_string (value, nautilus_progress_info_get_status (self));
+            g_value_take_string (value, nautilus_progress_info_get_short_status (self));
         }
         break;
 
@@ -235,10 +236,10 @@ nautilus_progress_info_class_init (NautilusProgressInfoClass *klass)
     properties[PROP_PROGRESS] = g_param_spec_double ("progress", NULL, NULL,
                                                      0, G_MAXDOUBLE, 0,
                                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
-    properties[PROP_STATUS] = g_param_spec_string ("status",
-                                                   NULL, NULL,
-                                                   "",
-                                                   G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+    properties[PROP_SHORT_STATUS] = g_param_spec_string ("short-status",
+                                                         NULL, NULL,
+                                                         "",
+                                                         G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
     g_object_class_install_properties (gobject_class, N_PROPS, properties);
 }
 
@@ -250,6 +251,7 @@ idle_callback (gpointer data)
     gboolean finish_at_idle;
     gboolean changed_at_idle;
     gboolean progress_at_idle;
+    gboolean status_at_idle;
     gboolean cancelled_at_idle;
     GSource *source;
 
@@ -283,12 +285,14 @@ idle_callback (gpointer data)
     finish_at_idle = info->finish_at_idle;
     changed_at_idle = info->changed_at_idle;
     progress_at_idle = info->progress_at_idle;
+    status_at_idle = info->status_at_idle;
     cancelled_at_idle = info->cancel_at_idle;
 
     info->start_at_idle = FALSE;
     info->finish_at_idle = FALSE;
     info->changed_at_idle = FALSE;
     info->progress_at_idle = FALSE;
+    info->status_at_idle = FALSE;
     info->cancel_at_idle = FALSE;
 
     G_UNLOCK (progress_info);
@@ -300,9 +304,8 @@ idle_callback (gpointer data)
                        0);
     }
 
-    if (changed_at_idle)
+    if (changed_at_idle || status_at_idle)
     {
-        g_object_notify (G_OBJECT (info), "status");
         g_signal_emit (info,
                        signals[CHANGED],
                        0);
@@ -314,6 +317,11 @@ idle_callback (gpointer data)
                        signals[PROGRESS_CHANGED],
                        0);
         g_object_notify (G_OBJECT (info), "progress");
+    }
+
+    if (status_at_idle)
+    {
+        g_object_notify_by_pspec (G_OBJECT (info), properties[PROP_SHORT_STATUS]);
     }
 
     if (finish_at_idle)
@@ -404,6 +412,21 @@ nautilus_progress_info_new (void)
     info = g_object_new (NAUTILUS_TYPE_PROGRESS_INFO, NULL);
 
     return info;
+}
+
+char *
+nautilus_progress_info_get_short_status (NautilusProgressInfo *info)
+{
+    char *res;
+
+    G_LOCK (progress_info);
+
+    res = info->status != NULL ? info->short_status : _("Preparing");
+    res = g_strdup (res);
+
+    G_UNLOCK (progress_info);
+
+    return res;
 }
 
 char *
@@ -626,43 +649,47 @@ nautilus_progress_info_finish (NautilusProgressInfo *info)
 
 static void
 set_status (NautilusProgressInfo *info,
-            const char           *status)
+            const char           *status,
+            const char           *short_status)
 {
-    g_free (info->status);
-    info->status = g_strdup (status);
+    if (g_cancellable_is_cancelled (info->cancellable))
+    {
+        return;
+    }
 
-    info->changed_at_idle = TRUE;
-    queue_idle (info, FALSE);
+    const char *real_short_status = short_status == NULL ? status : short_status;
+
+    if (g_set_str (&info->short_status, real_short_status) |
+        g_set_str (&info->status, status))
+    {
+        info->status_at_idle = TRUE;
+        queue_idle (info, FALSE);
+    }
 }
 
 void
 nautilus_progress_info_take_status (NautilusProgressInfo *info,
-                                    char                 *status)
+                                    char                 *status,
+                                    char                 *short_status)
 {
     G_LOCK (progress_info);
 
-    if (g_strcmp0 (info->status, status) != 0 &&
-        !g_cancellable_is_cancelled (info->cancellable))
-    {
-        set_status (info, status);
-    }
+    set_status (info, status, short_status);
 
     G_UNLOCK (progress_info);
 
     g_free (status);
+    g_free (short_status);
 }
 
 void
 nautilus_progress_info_set_status (NautilusProgressInfo *info,
-                                   const char           *status)
+                                   const char           *status,
+                                   const char           *short_status)
 {
     G_LOCK (progress_info);
 
-    if (g_strcmp0 (info->status, status) != 0 &&
-        !g_cancellable_is_cancelled (info->cancellable))
-    {
-        set_status (info, status);
-    }
+    set_status (info, status, short_status);
 
     G_UNLOCK (progress_info);
 }

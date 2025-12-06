@@ -40,8 +40,6 @@
 #include <gio/gio.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <sys/stat.h>
-#include <stdio.h>
 
 #define NAUTILUS_USER_DIRECTORY_NAME "nautilus"
 #define DEFAULT_NAUTILUS_DIRECTORY_MODE (0755)

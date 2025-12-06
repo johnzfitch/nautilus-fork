@@ -860,9 +860,6 @@ setup_name_cell (GtkSignalListItemFactory *factory,
         nautilus_name_cell_show_snippet (NAUTILUS_NAME_CELL (cell));
     }
 
-    /* Always show location shadow in list view */
-    nautilus_name_cell_show_location_shadow (NAUTILUS_NAME_CELL (cell));
-
     if (self->expand_as_a_tree)
     {
         GtkTreeExpander *expander;

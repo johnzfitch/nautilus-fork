@@ -9,13 +9,12 @@
 #include "nautilus-file.h"
 #include "nautilus-global-preferences.h"
 #include "nautilus-icon-info.h"
+#include "nautilus-image.h"
 #include "nautilus-tag-manager.h"
 #include "nautilus-thumbnails.h"
 #include "nautilus-ui-utilities.h"
 #include "nautilus-view-item.h"
 #include "nautilus-view-cell.h"
-#include "nautilus-animated-thumbnail.h"
-#include "nautilus-animated-paintable.h"
 
 struct _NautilusGridCell
 {
@@ -32,36 +31,10 @@ struct _NautilusGridCell
     GtkWidget *second_caption;
     GtkWidget *third_caption;
 
-    /* Animation support */
-    NautilusAnimatedPaintable *animated_paintable;
-    gboolean is_animated;
-    gboolean animation_playing;
+    gboolean in_file_change;
 };
 
 G_DEFINE_TYPE (NautilusGridCell, nautilus_grid_cell, NAUTILUS_TYPE_VIEW_CELL)
-
-static gboolean
-should_play_animation (NautilusGridCell *self)
-{
-    NautilusAnimationMode mode = nautilus_animated_thumbnail_get_mode ();
-
-    switch (mode)
-    {
-        case NAUTILUS_ANIMATION_MODE_NEVER:
-            return FALSE;
-
-        case NAUTILUS_ANIMATION_MODE_ALWAYS:
-            return TRUE;
-
-        case NAUTILUS_ANIMATION_MODE_ON_SELECT:
-        case NAUTILUS_ANIMATION_MODE_ON_HOVER:
-            /* Will be handled by event handlers */
-            return FALSE;
-
-        default:
-            return FALSE;
-    }
-}
 
 static void
 update_icon (NautilusGridCell *self)
@@ -75,9 +48,8 @@ update_icon (NautilusGridCell *self)
 
     if (is_cut)
     {
-        gtk_picture_set_paintable (GTK_PICTURE (self->icon), NULL);
+        gtk_widget_set_visible (self->icon, FALSE);
         gtk_widget_remove_css_class (self->icon, "hidden-file");
-        gtk_widget_remove_css_class (self->icon, "thumbnail");
 
         return;
     }
@@ -86,22 +58,26 @@ update_icon (NautilusGridCell *self)
     NautilusFile *file = nautilus_view_item_get_file (item);
     guint icon_size;
     gint scale_factor = gtk_widget_get_scale_factor (GTK_WIDGET (self));
-    NautilusFileIconFlags flags = NAUTILUS_FILE_ICON_FLAGS_USE_THUMBNAILS;
+    NautilusFileIconFlags flags = NAUTILUS_FILE_ICON_FLAGS_NONE;
+    gboolean show_thumbnail = nautilus_file_should_show_thumbnail (file);
 
     g_object_get (self, "icon-size", &icon_size, NULL);
-
     icon_paintable = nautilus_file_get_icon_paintable (file, icon_size, scale_factor, flags);
+    gtk_widget_set_visible (self->icon, TRUE);
+    nautilus_image_set_size (NAUTILUS_IMAGE (self->icon), icon_size);
+    nautilus_image_set_fallback (NAUTILUS_IMAGE (self->icon), icon_paintable);
 
-    gtk_picture_set_paintable (GTK_PICTURE (self->icon), icon_paintable);
-
-    if (nautilus_file_has_thumbnail (file) &&
-        nautilus_file_should_show_thumbnail (file))
+    if (self->in_file_change ||
+        !show_thumbnail)
     {
-        gtk_widget_add_css_class (self->icon, "thumbnail");
+        nautilus_image_set_source (NAUTILUS_IMAGE (self->icon), NULL);
     }
-    else
+
+    if (show_thumbnail)
     {
-        gtk_widget_remove_css_class (self->icon, "thumbnail");
+        g_autoptr (GFile) location = nautilus_file_get_location (file);
+
+        nautilus_image_set_source (NAUTILUS_IMAGE (self->icon), location);
     }
 
     if (nautilus_file_is_hidden_file (file))
@@ -193,9 +169,13 @@ update_emblems (NautilusGridCell *self)
 static void
 on_file_changed (NautilusGridCell *self)
 {
+    self->in_file_change = TRUE;
+
     update_icon (self);
     update_emblems (self);
     update_captions (self);
+
+    self->in_file_change = FALSE;
 }
 
 static void
@@ -280,21 +260,6 @@ static void
 nautilus_grid_cell_dispose (GObject *object)
 {
     NautilusGridCell *self = (NautilusGridCell *) object;
-
-    /* Disconnect signal group BEFORE disposing template to prevent
-     * callbacks from firing on widgets being destroyed. This fixes
-     * use-after-free crashes during search result cleanup. */
-    if (self->item_signal_group != NULL)
-    {
-        g_signal_group_set_target (self->item_signal_group, NULL);
-    }
-
-    /* Stop and clean up animation */
-    if (self->animated_paintable != NULL)
-    {
-        nautilus_animated_paintable_stop (self->animated_paintable);
-        g_clear_object (&self->animated_paintable);
-    }
 
     gtk_widget_dispose_template (GTK_WIDGET (self), NAUTILUS_TYPE_GRID_CELL);
     g_clear_object (&self->item_signal_group);
@@ -498,6 +463,8 @@ nautilus_grid_cell_class_init (NautilusGridCellClass *klass)
 
     widget_class->snapshot = snapshot;
 
+    g_type_ensure (NAUTILUS_TYPE_IMAGE);
+
     gtk_widget_class_set_template_from_resource (widget_class, "/org/gnome/nautilus/ui/nautilus-grid-cell.ui");
 
     gtk_widget_class_bind_template_child (widget_class, NautilusGridCell, icon);
@@ -521,6 +488,7 @@ nautilus_grid_cell_init (NautilusGridCell *self)
     g_signal_connect (self, "unmap", G_CALLBACK (on_map_changed), GINT_TO_POINTER (FALSE));
     g_signal_connect (self, "notify::icon-size",
                       G_CALLBACK (on_icon_size_changed), NULL);
+    g_signal_connect (self, "notify::scale-factor", G_CALLBACK (on_icon_size_changed), NULL);
 
     g_signal_connect_object (nautilus_tag_manager_get (), "starred-changed",
                              G_CALLBACK (on_starred_changed), self, G_CONNECT_DEFAULT);

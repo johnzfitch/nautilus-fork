@@ -89,6 +89,7 @@ struct NautilusFilePrivate
 	char *thumbnail_path;
 	GdkTexture *thumbnail;
 	time_t thumbnail_mtime;
+        GCancellable *thumbnail_cancellable;
 
 	char *activation_uri;
 
@@ -213,9 +214,6 @@ typedef struct {
 
 NautilusFile *nautilus_file_new_from_info                  (NautilusDirectory      *directory,
 							    GFileInfo              *info);
-NautilusFile *nautilus_file_new_from_filename              (NautilusDirectory *directory,
-                                                            const char        *filename,
-                                                            gboolean           self_owned);
 void          nautilus_file_emit_changed                   (NautilusFile           *file);
 void          nautilus_file_mark_unmounted                 (NautilusFile           *file);
 void          nautilus_file_mark_gone                      (NautilusFile           *file);
@@ -265,8 +263,6 @@ void                   nautilus_file_info_providers_done                (Nautilu
 
 
 /* Thumbnailing: */
-void          nautilus_file_set_is_thumbnailing            (NautilusFile           *file,
-							    gboolean                is_thumbnailing);
 gboolean          nautilus_file_set_thumbnail              (NautilusFile           *file,
                                                             GdkPixbuf              *pixbuf);
 

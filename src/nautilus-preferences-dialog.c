@@ -38,8 +38,6 @@
         "sort_folders_first_row"
 #define NAUTILUS_PREFERENCES_DIALOG_DELETE_PERMANENTLY_WIDGET                  \
         "show_delete_permanently_row"
-#define NAUTILUS_PREFERENCES_DIALOG_SHOW_HIDDEN_FILES_WIDGET                   \
-        "show_hidden_files_row"
 #define NAUTILUS_PREFERENCES_DIALOG_CREATE_LINK_WIDGET                         \
         "show_create_link_row"
 #define NAUTILUS_PREFERENCES_DIALOG_LIST_VIEW_USE_TREE_WIDGET                  \
@@ -54,16 +52,6 @@
         "thumbnails_row"
 #define NAUTILUS_PREFERENCES_DIALOG_COUNT_ROW                       \
         "count_row"
-#define NAUTILUS_PREFERENCES_DIALOG_SEARCH_RESULTS_LIMIT_ROW        \
-        "search_results_limit_row"
-#define NAUTILUS_PREFERENCES_DIALOG_SEARCH_SHOW_HIDDEN_FILES_ROW    \
-        "search_show_hidden_files_row"
-#define NAUTILUS_PREFERENCES_DIALOG_SEARCH_CACHE_GROUP              \
-        "search_cache_group"
-#define NAUTILUS_PREFERENCES_DIALOG_SEARCH_CACHE_LISTBOX            \
-        "search_cache_dirs_listbox"
-#define NAUTILUS_PREFERENCES_DIALOG_SEARCH_CACHE_ADD_BUTTON         \
-        "search_cache_add_button"
 
 static const char * const speed_tradeoff_values[] =
 {
@@ -77,233 +65,6 @@ static const char * const icon_captions_components[] =
 {
     "captions_0_comborow", "captions_1_comborow", "captions_2_comborow", NULL
 };
-
-/* Search Cache Directory Management */
-
-/* Forward declarations */
-static void on_remove_directory_clicked (GtkButton *button, gpointer user_data);
-static void on_folder_selected (GObject *source, GAsyncResult *result, gpointer user_data);
-static void on_add_directory_clicked (GtkButton *button, gpointer user_data);
-
-static gchar **
-get_search_cache_directories (void)
-{
-    g_autofree gchar *stdout_str = NULL;
-    g_autoptr (GError) error = NULL;
-    gchar *argv[] = {"sc", "config", "list-dirs", NULL};
-    gint exit_status = 0;
-
-    if (!g_spawn_sync (NULL, argv, NULL,
-                       G_SPAWN_SEARCH_PATH,
-                       NULL, NULL,
-                       &stdout_str, NULL, &exit_status, &error))
-    {
-        g_warning ("Failed to get search cache dirs: %s", error ? error->message : "Unknown error");
-        return NULL;
-    }
-
-    if (exit_status != 0)
-    {
-        g_warning ("sc config list-dirs failed with exit status %d", exit_status);
-        return NULL;
-    }
-
-    if (stdout_str == NULL || stdout_str[0] == '\0')
-    {
-        return NULL;
-    }
-
-    /* Simple JSON array parser: ["path1", "path2", ...] */
-    GPtrArray *paths = g_ptr_array_new_with_free_func (g_free);
-
-    /* Remove leading and trailing whitespace and brackets */
-    gchar *start = g_strchug (stdout_str);
-    if (start[0] != '[')
-    {
-        g_warning ("JSON array must start with '['");
-        g_ptr_array_free (paths, TRUE);
-        return NULL;
-    }
-
-    gchar *end = strchr (start, ']');
-    if (end == NULL)
-    {
-        g_warning ("JSON array must end with ']'");
-        g_ptr_array_free (paths, TRUE);
-        return NULL;
-    }
-
-    /* Parse elements between brackets */
-    gchar *content = g_strndup (start + 1, end - start - 1);
-    g_strchug (content);
-    g_strchomp (content);
-
-    if (content[0] != '\0')
-    {
-        gchar *saveptr = NULL;
-        gchar *token = strtok_r (content, ",", &saveptr);
-
-        while (token != NULL)
-        {
-            /* Trim whitespace */
-            token = g_strchug (token);
-            gchar *token_end = token + strlen (token) - 1;
-            while (token_end >= token && g_ascii_isspace (*token_end))
-            {
-                *token_end = '\0';
-                token_end--;
-            }
-
-            /* Remove quotes */
-            if (token[0] == '"')
-            {
-                gchar *inner = token + 1;
-                if (inner[strlen (inner) - 1] == '"')
-                {
-                    inner[strlen (inner) - 1] = '\0';
-                }
-                g_ptr_array_add (paths, g_strdup (inner));
-            }
-            else if (strlen (token) > 0)
-            {
-                g_ptr_array_add (paths, g_strdup (token));
-            }
-
-            token = strtok_r (NULL, ",", &saveptr);
-        }
-    }
-
-    g_free (content);
-
-    /* Convert to null-terminated array */
-    g_ptr_array_add (paths, NULL);
-    gchar **result = (gchar **) g_ptr_array_free (paths, FALSE);
-
-    return result;
-}
-
-static void
-add_search_cache_directory (const gchar *path)
-{
-    g_autoptr (GError) error = NULL;
-    gchar *argv[] = {"sc", "config", "add-dir", (gchar *)path, NULL};
-
-    if (!g_spawn_sync (NULL, argv, NULL,
-                       G_SPAWN_SEARCH_PATH,
-                       NULL, NULL,
-                       NULL, NULL, NULL, &error))
-    {
-        g_warning ("Failed to add search cache dir: %s", error ? error->message : "Unknown error");
-    }
-}
-
-static void
-remove_search_cache_directory (const gchar *path)
-{
-    g_autoptr (GError) error = NULL;
-    gchar *argv[] = {"sc", "config", "remove-dir", (gchar *)path, NULL};
-
-    if (!g_spawn_sync (NULL, argv, NULL,
-                       G_SPAWN_SEARCH_PATH,
-                       NULL, NULL,
-                       NULL, NULL, NULL, &error))
-    {
-        g_warning ("Failed to remove search cache dir: %s", error ? error->message : "Unknown error");
-    }
-}
-
-static GtkWidget *
-create_directory_row (const gchar *path, GtkListBox *listbox)
-{
-    GtkWidget *row = adw_action_row_new ();
-    adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), path);
-
-    GtkWidget *remove_button = gtk_button_new_from_icon_name ("edit-delete-symbolic");
-    gtk_widget_set_valign (remove_button, GTK_ALIGN_CENTER);
-    gtk_widget_add_css_class (remove_button, "flat");
-    adw_action_row_add_suffix (ADW_ACTION_ROW (row), remove_button);
-
-    g_object_set_data_full (G_OBJECT (remove_button), "path", g_strdup (path), g_free);
-    g_object_set_data (G_OBJECT (remove_button), "listbox", listbox);
-    g_object_set_data (G_OBJECT (remove_button), "row", row);
-
-    g_signal_connect (remove_button, "clicked", G_CALLBACK (on_remove_directory_clicked), NULL);
-
-    return row;
-}
-
-static void
-on_remove_directory_clicked (GtkButton *button, gpointer user_data)
-{
-    const gchar *path = g_object_get_data (G_OBJECT (button), "path");
-    GtkListBox *listbox = g_object_get_data (G_OBJECT (button), "listbox");
-    GtkWidget *row = g_object_get_data (G_OBJECT (button), "row");
-
-    remove_search_cache_directory (path);
-    gtk_list_box_remove (listbox, row);
-}
-
-static void
-on_folder_selected (GObject      *source,
-                    GAsyncResult *result,
-                    gpointer      user_data)
-{
-    GtkFileDialog *dialog = GTK_FILE_DIALOG (source);
-    GtkListBox *listbox = GTK_LIST_BOX (user_data);
-    g_autoptr (GError) error = NULL;
-    g_autoptr (GFile) file = gtk_file_dialog_select_folder_finish (dialog, result, &error);
-
-    if (file != NULL)
-    {
-        g_autofree gchar *path = g_file_get_path (file);
-        add_search_cache_directory (path);
-
-        GtkWidget *row = create_directory_row (path, listbox);
-        gtk_list_box_append (listbox, row);
-    }
-    else if (error != NULL && !g_error_matches (error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED))
-    {
-        g_warning ("Failed to select folder: %s", error->message);
-    }
-}
-
-static void
-on_add_directory_clicked (GtkButton *button, gpointer user_data)
-{
-    GtkListBox *listbox = GTK_LIST_BOX (user_data);
-    GtkFileDialog *dialog;
-    GtkRoot *root = gtk_widget_get_root (GTK_WIDGET (button));
-
-    dialog = gtk_file_dialog_new ();
-    gtk_file_dialog_set_title (dialog, "Select Directory to Index");
-
-    gtk_file_dialog_select_folder (dialog,
-                                   GTK_WINDOW (root),
-                                   NULL,
-                                   on_folder_selected,
-                                   listbox);
-}
-
-static void
-populate_search_cache_listbox (GtkListBox *listbox)
-{
-    g_auto (GStrv) dirs = get_search_cache_directories ();
-
-    if (dirs == NULL)
-    {
-        g_debug ("No search cache directories found");
-        return;
-    }
-
-    for (gsize i = 0; dirs[i] != NULL; i++)
-    {
-        if (dirs[i][0] != '\0')
-        {
-            GtkWidget *row = create_directory_row (dirs[i], listbox);
-            gtk_list_box_append (listbox, row);
-        }
-    }
-}
 
 static void
 create_icon_caption_combo_row_items (AdwComboRow *combo_row,
@@ -487,38 +248,6 @@ bind_builder_bool (GtkBuilder *builder,
                      "active", G_SETTINGS_BIND_DEFAULT);
 }
 
-static GVariant *
-spin_row_mapping_set (const GValue       *gvalue,
-                      const GVariantType *expected_type,
-                      gpointer            user_data)
-{
-    return g_variant_new_uint32 ((guint32) g_value_get_double (gvalue));
-}
-
-static gboolean
-spin_row_mapping_get (GValue   *gvalue,
-                      GVariant *variant,
-                      gpointer  user_data)
-{
-    g_value_set_double (gvalue, (gdouble) g_variant_get_uint32 (variant));
-    return TRUE;
-}
-
-static void
-bind_builder_spin_row (GtkBuilder *builder,
-                       GSettings  *settings,
-                       const char *widget_name,
-                       const char *prefs)
-{
-    GtkWidget *spin_row = GTK_WIDGET (gtk_builder_get_object (builder, widget_name));
-    GtkAdjustment *adjustment = adw_spin_row_get_adjustment (ADW_SPIN_ROW (spin_row));
-
-    g_settings_bind_with_mapping (settings, prefs, adjustment,
-                                  "value", G_SETTINGS_BIND_DEFAULT,
-                                  spin_row_mapping_get, spin_row_mapping_set,
-                                  NULL, NULL);
-}
-
 /* Translators: Both %s will be replaced with formatted timestamps. */
 #define DATE_FORMAT_ROW_SUBTITLE _("Examples: “%s”, “%s”")
 
@@ -632,9 +361,6 @@ nautilus_preferences_dialog_setup (GtkBuilder *builder)
     bind_builder_bool (builder, nautilus_preferences,
                        NAUTILUS_PREFERENCES_DIALOG_DELETE_PERMANENTLY_WIDGET,
                        NAUTILUS_PREFERENCES_SHOW_DELETE_PERMANENTLY);
-    bind_builder_bool (builder, gtk_filechooser_preferences,
-                       NAUTILUS_PREFERENCES_DIALOG_SHOW_HIDDEN_FILES_WIDGET,
-                       NAUTILUS_PREFERENCES_SHOW_HIDDEN_FILES);
 
     setup_detailed_date (builder);
 
@@ -655,25 +381,7 @@ nautilus_preferences_dialog_setup (GtkBuilder *builder)
                             NAUTILUS_PREFERENCES_SHOW_DIRECTORY_ITEM_COUNTS,
                             (const char **) speed_tradeoff_values);
 
-    bind_builder_spin_row (builder, nautilus_preferences,
-                           NAUTILUS_PREFERENCES_DIALOG_SEARCH_RESULTS_LIMIT_ROW,
-                           NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT);
-
-    bind_builder_bool (builder, nautilus_preferences,
-                       NAUTILUS_PREFERENCES_DIALOG_SEARCH_SHOW_HIDDEN_FILES_ROW,
-                       NAUTILUS_PREFERENCES_SEARCH_SHOW_HIDDEN_FILES);
-
     nautilus_preferences_dialog_setup_icon_caption_page (builder);
-
-    /* Setup search cache directories UI */
-    GtkWidget *listbox = GTK_WIDGET (gtk_builder_get_object (builder, NAUTILUS_PREFERENCES_DIALOG_SEARCH_CACHE_LISTBOX));
-    GtkWidget *add_button = GTK_WIDGET (gtk_builder_get_object (builder, NAUTILUS_PREFERENCES_DIALOG_SEARCH_CACHE_ADD_BUTTON));
-
-    if (listbox != NULL && add_button != NULL)
-    {
-        populate_search_cache_listbox (GTK_LIST_BOX (listbox));
-        g_signal_connect (add_button, "clicked", G_CALLBACK (on_add_directory_clicked), listbox);
-    }
 }
 
 void

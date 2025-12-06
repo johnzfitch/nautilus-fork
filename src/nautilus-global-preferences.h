@@ -102,7 +102,6 @@ typedef enum
 #define NAUTILUS_PREFERENCES_SHOW_DIRECTORY_ITEM_COUNTS "show-directory-item-counts"
 #define NAUTILUS_PREFERENCES_SHOW_FILE_THUMBNAILS	"show-image-thumbnails"
 #define NAUTILUS_PREFERENCES_FILE_THUMBNAIL_LIMIT	"thumbnail-limit"
-#define NAUTILUS_PREFERENCES_ANIMATED_THUMBNAILS	"animated-thumbnails"
 
 typedef enum
 {
@@ -125,12 +124,6 @@ typedef enum
 
 /* Full Text Search enabled */
 #define NAUTILUS_PREFERENCES_FTS_ENABLED "fts-enabled"
-
-/* Search results limit per provider */
-#define NAUTILUS_PREFERENCES_SEARCH_RESULTS_LIMIT "search-results-limit"
-
-/* Show hidden files in search results */
-#define NAUTILUS_PREFERENCES_SEARCH_SHOW_HIDDEN_FILES "search-show-hidden-files"
 
 /* Gtk settings migration happened */
 #define NAUTILUS_PREFERENCES_MIGRATED_GTK_SETTINGS "migrated-gtk-settings"

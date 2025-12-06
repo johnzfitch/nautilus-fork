@@ -28,7 +28,6 @@ enum
 {
     HITS_ADDED,
     FINISHED,
-    ERROR,
     LAST_SIGNAL
 };
 
@@ -48,23 +47,11 @@ nautilus_search_provider_default_init (NautilusSearchProviderInterface *iface)
                                         G_TYPE_NONE, 1,
                                         G_TYPE_POINTER);
 
-    signals[FINISHED] = g_signal_new ("finished",
-                                      NAUTILUS_TYPE_SEARCH_PROVIDER,
-                                      G_SIGNAL_RUN_LAST,
-                                      G_STRUCT_OFFSET (NautilusSearchProviderInterface, finished),
+    signals[FINISHED] = g_signal_new ("provider-finished", NAUTILUS_TYPE_SEARCH_PROVIDER,
+                                      G_SIGNAL_RUN_LAST, 0,
                                       NULL, NULL,
-                                      g_cclosure_marshal_VOID__ENUM,
-                                      G_TYPE_NONE, 1,
-                                      NAUTILUS_TYPE_SEARCH_PROVIDER_STATUS);
-
-    signals[ERROR] = g_signal_new ("error",
-                                   NAUTILUS_TYPE_SEARCH_PROVIDER,
-                                   G_SIGNAL_RUN_LAST,
-                                   G_STRUCT_OFFSET (NautilusSearchProviderInterface, error),
-                                   NULL, NULL,
-                                   g_cclosure_marshal_VOID__STRING,
-                                   G_TYPE_NONE, 1,
-                                   G_TYPE_STRING);
+                                      g_cclosure_marshal_VOID__VOID,
+                                      G_TYPE_NONE, 0);
 }
 
 gboolean
@@ -102,21 +89,9 @@ nautilus_search_provider_hits_added (NautilusSearchProvider *provider,
 }
 
 void
-nautilus_search_provider_finished (NautilusSearchProvider       *provider,
-                                   NautilusSearchProviderStatus  status)
+nautilus_search_provider_finished (NautilusSearchProvider *provider)
 {
     g_return_if_fail (NAUTILUS_IS_SEARCH_PROVIDER (provider));
 
-    g_signal_emit (provider, signals[FINISHED], 0, status);
-}
-
-void
-nautilus_search_provider_error (NautilusSearchProvider *provider,
-                                const char             *error_message)
-{
-    g_return_if_fail (NAUTILUS_IS_SEARCH_PROVIDER (provider));
-
-    g_warning ("Provider %s failed with error %s\n",
-               G_OBJECT_TYPE_NAME (provider), error_message);
-    g_signal_emit (provider, signals[ERROR], 0, error_message);
+    g_signal_emit (provider, signals[FINISHED], 0);
 }

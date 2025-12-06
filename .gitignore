@@ -1,7 +1,6 @@
 build/
 .*/
 !.gitlab/
-!.github/
 
 # Ignore meson's subprojects folder
 /subprojects
@@ -16,58 +15,3 @@ build/
 # Ignore captures
 /*.syscap
 /heaptrack.nautilus.*
-
-# Claude Code local notes
-CLAUDE.md
-
-# Personal/Marketing Files (do not commit)
-/tmp/nautilus-plus-reddit-post.md
-/tmp/nautilus-search-blacklist-guide.md
-/tmp/nautilus-plus-changes-summary.md
-/tmp/nautilus-plus-installation-guide.md
-/tmp/progressive-search-design.md
-/tmp/test-search.sh
-/tmp/INSTALLATION.md
-/tmp/.gitignore-additions
-/tmp/setup-nautilus-docs-fixed.sh
-/tmp/rename-repo-on-github.sh
-/tmp/profile-readme-nautilus-section.md
-
-# Personal documentation staging
-IMPLEMENTATION-STATUS.md
-INFO-PANEL-APPROACHES.md
-RUST-IMPLEMENTATION-SUMMARY.md
-RUST-INFO-PANEL-GUIDE.md
-ANIMATED-WEBP-PLAN.md
-BUILDING-OMARCHY.md
-CONTRIBUTING-OMARCHY.md
-INFO-PANEL-ARCHITECTURE.md
-INFO-PANEL-CODE-REFERENCE.md
-INFO-PANEL-PLAN.md
-OMARCHY-FEATURES.md
-OMARCHY-SETUP.md
-PHASE2-STATUS.md
-
-# Test files and reports
-STRESS-TEST-*.md
-STRESS-TEST-*.txt
-STRESS-TESTING-GUIDE.md
-TEST-*.md
-TEST-*.txt
-TESTING-INDEX.md
-stress-test*.py
-stress-test*.sh
-stress-test*.log
-test-*.sh
-edge-case-stress-test.py
-advanced-stress-test.py
-
-# Build artifacts
-nautilus-info-panel-rs/
-pyghidra_mcp_projects/
-
-# Backup files
-*.backup-searchcache
-
-# Test reports
-test-reports/

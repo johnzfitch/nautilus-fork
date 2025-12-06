@@ -652,8 +652,6 @@ nautilus_properties_window_drag_drop_cb (GtkDropTarget *target,
                                          gdouble        y,
                                          gpointer       user_data)
 {
-    GSList *file_list;
-    gboolean exactly_one;
     GtkImage *image;
     GtkWindow *window;
 
@@ -665,8 +663,14 @@ nautilus_properties_window_drag_drop_cb (GtkDropTarget *target,
         return;
     }
 
-    file_list = g_value_get_boxed (value);
-    exactly_one = file_list != NULL && g_slist_next (file_list) == NULL;
+    GSList *file_list = g_value_get_boxed (value);
+
+    if (file_list == NULL)
+    {
+        return;
+    }
+
+    gboolean exactly_one = file_list != NULL && g_slist_next (file_list) == NULL;
 
     if (!exactly_one)
     {
@@ -2495,7 +2499,7 @@ open_parent_folder (NautilusPropertiesWindow *self)
                                              parent_location,
                                              NAUTILUS_OPEN_FLAG_NEW_WINDOW,
                                              &(NautilusFileList){ .data = file },
-                                             NULL, NULL, NULL);
+                                             NULL);
 }
 
 static void
@@ -2517,7 +2521,7 @@ open_link_target (NautilusPropertiesWindow *self)
                                              parent_location,
                                              NAUTILUS_OPEN_FLAG_NEW_WINDOW,
                                              &(NautilusFileList){ .data = link_target_file },
-                                             NULL, NULL, NULL);
+                                             NULL);
 }
 
 static void
@@ -3898,7 +3902,8 @@ nautilus_properties_window_present (GList                            *files,
         parent_window == NULL ? NULL : GTK_WINDOW (parent_window));
 
     nautilus_file_list_call_when_ready (startup_data->files,
-                                        NAUTILUS_FILE_ATTRIBUTE_INFO,
+                                        NAUTILUS_FILE_ATTRIBUTE_INFO |
+                                        NAUTILUS_FILE_ATTRIBUTES_FOR_ICON,
                                         &startup_data->handle,
                                         is_directory_ready_callback,
                                         startup_data);

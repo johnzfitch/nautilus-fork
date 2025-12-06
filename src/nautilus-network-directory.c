@@ -521,19 +521,9 @@ real_handles_location (GFile *location)
 }
 
 static NautilusFile *
-real_new_file_from_filename (NautilusDirectory *directory,
-                             const char        *filename,
-                             gboolean           self_owned)
+real_new_as_file (NautilusDirectory *directory)
 {
-    if (!self_owned)
-    {
-        /* Children are regular vfs locations. */
-        return NAUTILUS_DIRECTORY_CLASS (nautilus_network_directory_parent_class)->new_file_from_filename (directory, filename, self_owned);
-    }
-
-    return NAUTILUS_FILE (g_object_new (NAUTILUS_TYPE_INTERNAL_PLACE_FILE,
-                                        "directory", directory,
-                                        NULL));
+    return g_object_new (NAUTILUS_TYPE_INTERNAL_PLACE_FILE, "directory", directory, NULL);
 }
 
 static void
@@ -613,7 +603,7 @@ nautilus_network_directory_class_init (NautilusNetworkDirectoryClass *klass)
     directory_class->is_not_empty = real_is_not_empty;
     directory_class->is_editable = real_is_editable;
     directory_class->handles_location = real_handles_location;
-    directory_class->new_file_from_filename = real_new_file_from_filename;
+    directory_class->new_as_file = real_new_as_file;
 }
 
 NautilusNetworkDirectory *
