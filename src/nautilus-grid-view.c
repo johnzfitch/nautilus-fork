@@ -41,7 +41,7 @@ static const NautilusViewInfo grid_view_info =
 {
     .view_id = NAUTILUS_VIEW_GRID_ID,
     .zoom_level_min = NAUTILUS_GRID_ZOOM_LEVEL_SMALL,
-    .zoom_level_max = NAUTILUS_GRID_ZOOM_LEVEL_EXTRA_LARGE,
+    .zoom_level_max = NAUTILUS_GRID_ZOOM_LEVEL_GIGANTIC,
     .zoom_level_standard = NAUTILUS_GRID_ZOOM_LEVEL_MEDIUM,
 };
 
@@ -137,6 +137,18 @@ get_icon_size_for_zoom_level (NautilusGridZoomLevel zoom_level)
         case NAUTILUS_GRID_ZOOM_LEVEL_EXTRA_LARGE:
         {
             return NAUTILUS_GRID_ICON_SIZE_EXTRA_LARGE;
+        }
+        break;
+
+        case NAUTILUS_GRID_ZOOM_LEVEL_HUGE:
+        {
+            return NAUTILUS_GRID_ICON_SIZE_HUGE;
+        }
+        break;
+
+        case NAUTILUS_GRID_ZOOM_LEVEL_GIGANTIC:
+        {
+            return NAUTILUS_GRID_ICON_SIZE_GIGANTIC;
         }
         break;
     }
