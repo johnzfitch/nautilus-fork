@@ -8,6 +8,8 @@
 #include <src/nautilus-search-hit.h>
 #include <src/nautilus-search-provider.h>
 
+#include <tinysparql.h>
+
 /* Time in seconds we allow for localsearch Miners to index the file */
 #define LOCALSEARCH_MINERS_AWAIT_TIMEOUT 1000
 
@@ -110,10 +112,8 @@ create_test_data (TrackerSparqlConnection *connection,
 
 static void
 hits_added_cb (NautilusSearchEngine *engine,
-               GPtrArray            *transferred_hits)
+               GPtrArray            *hits)
 {
-    g_autoptr (GPtrArray) hits = transferred_hits;
-
     g_print ("Hits added for search engine localsearch!\n");
     for (guint i = 0; i < hits->len; i++)
     {
@@ -123,15 +123,11 @@ hits_added_cb (NautilusSearchEngine *engine,
 }
 
 static void
-finished_cb (NautilusSearchEngine         *engine,
-             NautilusSearchProviderStatus  status,
-             gpointer                      user_data)
+finished_cb (GMainLoop *loop)
 {
-    nautilus_search_provider_stop (NAUTILUS_SEARCH_PROVIDER (engine));
-
     g_print ("\nNautilus search engine localsearch finished!\n");
 
-    g_main_loop_quit (user_data);
+    g_main_loop_quit (loop);
 }
 
 int
@@ -154,7 +150,7 @@ main (int   argc,
                  "to ensure a private Localsearch indexer daemon is used.");
     }
 
-    connection = tracker_sparql_connection_bus_new ("org.freedesktop.Tracker3.Miner.Files", NULL, NULL, &error);
+    connection = nautilus_tracker_get_miner_fs_connection (&error);
 
     g_assert_no_error (error);
 
@@ -169,11 +165,11 @@ main (int   argc,
 
     create_test_data (connection, indexed_tmpdir);
 
-    NautilusSearchEngine *engine = nautilus_search_engine_new (NAUTILUS_SEARCH_TYPE_LOCALSEARCH);
+    g_autoptr (NautilusSearchEngine) engine =
+        nautilus_search_engine_new (NAUTILUS_SEARCH_TYPE_LOCALSEARCH);
     g_signal_connect (engine, "hits-added",
                       G_CALLBACK (hits_added_cb), NULL);
-    g_signal_connect (engine, "finished",
-                      G_CALLBACK (finished_cb), loop);
+    g_signal_connect_swapped (engine, "search-finished", G_CALLBACK (finished_cb), loop);
 
     query = nautilus_query_new ();
     nautilus_query_set_text (query, "target");
@@ -181,7 +177,7 @@ main (int   argc,
     location = g_file_new_for_path (indexed_tmpdir);
     nautilus_query_set_location (query, location);
 
-    nautilus_search_provider_start (NAUTILUS_SEARCH_PROVIDER (engine), query);
+    nautilus_search_engine_start (engine, query);
 
     g_main_loop_run (loop);
 

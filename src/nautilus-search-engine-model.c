@@ -93,8 +93,7 @@ search_finished (NautilusSearchEngineModel *model)
     model->query_pending = FALSE;
 
     g_debug ("Model engine finished");
-    nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (model),
-                                       NAUTILUS_SEARCH_PROVIDER_STATUS_NORMAL);
+    nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (model));
     g_object_unref (model);
 
     return FALSE;
@@ -117,7 +116,6 @@ model_directory_ready_cb (NautilusDirectory *directory,
                           gpointer           user_data)
 {
     NautilusSearchEngineModel *model = user_data;
-    g_autoptr (GPtrArray) mime_types = NULL;
     gchar *uri;
     GList *files, *l;
     GPtrArray *hits = g_ptr_array_new_with_free_func (g_object_unref);
@@ -130,7 +128,6 @@ model_directory_ready_cb (NautilusDirectory *directory,
     GPtrArray *date_range;
 
     files = nautilus_directory_get_file_list (directory);
-    mime_types = nautilus_query_get_mime_types (model->query);
 
     for (l = files; l != NULL; l = l->next)
     {
@@ -149,20 +146,9 @@ model_directory_ready_cb (NautilusDirectory *directory,
             continue;
         }
 
-        if (mime_types->len > 0)
-        {
-            found = FALSE;
+        const char *mime_type = nautilus_file_get_mime_type (file);
 
-            for (guint i = 0; i < mime_types->len; i++)
-            {
-                if (nautilus_file_is_mime_type (file, g_ptr_array_index (mime_types, i)))
-                {
-                    found = TRUE;
-                    break;
-                }
-            }
-        }
-        if (!found)
+        if (!nautilus_query_matches_mime_type (model->query, mime_type))
         {
             continue;
         }

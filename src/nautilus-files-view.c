@@ -2923,7 +2923,6 @@ add_directory_to_directory_list (NautilusFilesView  *view,
         nautilus_directory_ref (directory);
 
         attributes =
-            NAUTILUS_FILE_ATTRIBUTES_FOR_ICON |
             NAUTILUS_FILE_ATTRIBUTE_INFO |
             NAUTILUS_FILE_ATTRIBUTE_DIRECTORY_ITEM_COUNT;
 
@@ -4645,7 +4644,6 @@ nautilus_files_view_add_subdirectory (NautilusFilesView *self,
     nautilus_directory_ref (directory);
 
     attributes =
-        NAUTILUS_FILE_ATTRIBUTES_FOR_ICON |
         NAUTILUS_FILE_ATTRIBUTE_DIRECTORY_ITEM_COUNT |
         NAUTILUS_FILE_ATTRIBUTE_INFO |
         NAUTILUS_FILE_ATTRIBUTE_MOUNT |
@@ -5629,7 +5627,7 @@ action_open_scripts_folder (GSimpleAction *action,
     }
 
     nautilus_application_open_location_full (NAUTILUS_APPLICATION (g_application_get_default ()),
-                                             location, 0, NULL, NULL, NULL, NULL);
+                                             location, 0, NULL, NULL);
 }
 
 static GFile *
@@ -8532,13 +8530,11 @@ finish_loading (NautilusFilesView *self)
     self->load_error_handler_id = g_signal_connect (self->directory, "load-error",
                                                     G_CALLBACK (load_error_callback), self);
 
-    /* Monitor the things needed to get the right icon. Also
-     * monitor a directory's item count because the "size"
+    /* Monitor a directory's item count because the "size"
      * attribute is based on that, and the file's metadata
      * and possible custom name.
      */
     attributes =
-        NAUTILUS_FILE_ATTRIBUTES_FOR_ICON |
         NAUTILUS_FILE_ATTRIBUTE_DIRECTORY_ITEM_COUNT |
         NAUTILUS_FILE_ATTRIBUTE_INFO |
         NAUTILUS_FILE_ATTRIBUTE_MOUNT |
@@ -9395,7 +9391,10 @@ nautilus_files_view_class_init (NautilusFilesViewClass *klass)
     gtk_widget_class_add_binding_action (widget_class, GDK_KEY_Return, GDK_CONTROL_MASK, "view.open-item-new-tab", NULL);
     gtk_widget_class_add_binding_action (widget_class, GDK_KEY_Return, GDK_SHIFT_MASK, "view.open-item-new-window", NULL);
     gtk_widget_class_add_binding_action (widget_class, GDK_KEY_o, GDK_CONTROL_MASK | GDK_ALT_MASK, "view.open-item-location", NULL);
+    gtk_widget_class_add_binding_action (widget_class, GDK_KEY_Insert, GDK_CONTROL_MASK, "view.copy", NULL);
+    gtk_widget_class_add_binding_action (widget_class, GDK_KEY_KP_Insert, GDK_CONTROL_MASK, "view.copy", NULL);
     gtk_widget_class_add_binding_action (widget_class, GDK_KEY_c, GDK_CONTROL_MASK, "view.copy", NULL);
+    gtk_widget_class_add_binding_action (widget_class, GDK_KEY_v, GDK_CONTROL_MASK, "view.paste", NULL);
     gtk_widget_class_add_binding_action (widget_class, GDK_KEY_x, GDK_CONTROL_MASK, "view.cut", NULL);
     gtk_widget_class_add_binding_action (widget_class, GDK_KEY_c, GDK_CONTROL_MASK, "view.copy-network-address", NULL);
 }
@@ -9538,7 +9537,7 @@ nautilus_files_view_init (NautilusFilesView *self)
      * with e.g. Alt+Tab and paste directly the copied file without having to
      * make sure the focus is on the files view.
      */
-    ADD_SHORTCUT_FOR_ACTION (self->shortcuts, "view.paste_accel", "<control>v");
+    ADD_SHORTCUT_FOR_ACTION (self->shortcuts, "view.paste_accel", "<control>v|<shift>Insert|<shift>KP_Insert");
     ADD_SHORTCUT_FOR_ACTION (self->shortcuts, "view.new-folder", "<control><shift>n");
     ADD_SHORTCUT_FOR_ACTION (self->shortcuts, "view.select-pattern", "<control>s");
     ADD_SHORTCUT_FOR_ACTION (self->shortcuts, "view.zoom-standard", "<control>0|<control>KP_0");
@@ -9738,4 +9737,16 @@ NautilusViewModel *
 nautilus_files_view_get_private_model (NautilusFilesView *self)
 {
     return self->model;
+}
+
+GActionGroup *
+nautilus_files_view_get_private_action_group (NautilusFilesView *self)
+{
+    return self->view_action_group;
+}
+
+NautilusListBase *
+nautilus_files_view_get_private_list_base (NautilusFilesView *self)
+{
+    return self->list_base;
 }

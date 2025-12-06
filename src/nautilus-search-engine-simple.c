@@ -43,9 +43,6 @@ typedef struct
     NautilusSearchEngineSimple *engine;
     GCancellable *cancellable;
 
-    GPtrArray *mime_types;
-    GList *found_list;
-
     GQueue *directories;     /* GFiles */
 
     GHashTable *visited;
@@ -108,7 +105,6 @@ search_thread_data_new (NautilusSearchEngineSimple *engine,
     data->directories = g_queue_new ();
     data->visited = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
     data->query = g_object_ref (query);
-    data->mime_types = nautilus_query_get_mime_types (query);
 
     data->cancellable = g_cancellable_new ();
 
@@ -127,23 +123,14 @@ search_thread_data_new (NautilusSearchEngineSimple *engine,
 static void
 search_thread_data_free (SearchThreadData *data)
 {
-    g_queue_foreach (data->directories,
-                     (GFunc) g_object_unref, NULL);
-    g_queue_free (data->directories);
+    g_queue_free_full (data->directories, (GDestroyNotify) g_object_unref);
     g_hash_table_destroy (data->visited);
     g_object_unref (data->cancellable);
     g_object_unref (data->query);
-    g_clear_pointer (&data->mime_types, g_ptr_array_unref);
     g_clear_pointer (&data->hits, g_ptr_array_unref);
     g_object_unref (data->engine);
     g_mutex_clear (&data->idle_mutex);
-
-    GPtrArray *hits;
-    while ((hits = g_queue_pop_head (data->idle_queue)))
-    {
-        g_ptr_array_unref (hits);
-    }
-    g_queue_free (data->idle_queue);
+    g_queue_free_full (data->idle_queue, (GDestroyNotify) g_ptr_array_unref);
 
     g_free (data);
 }
@@ -167,8 +154,7 @@ search_thread_done (SearchThreadData *data)
         g_debug ("Simple engine finished correctly with %u results", data->total_hits);
     }
     engine->active_search = NULL;
-    nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (engine),
-                                       NAUTILUS_SEARCH_PROVIDER_STATUS_NORMAL);
+    nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (engine));
 
     search_thread_data_free (data);
 
@@ -285,23 +271,27 @@ send_batch_in_idle (SearchThreadData *thread_data)
         G_FILE_ATTRIBUTE_TIME_CREATED "," \
         G_FILE_ATTRIBUTE_ID_FILE
 
+#define STD_ATTRIBUTES_WITH_CONTENT_TYPE \
+        STD_ATTRIBUTES "," \
+        G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE "," \
+        G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE
+
+static gboolean
+file_is_remote (GFile *file)
+{
+    g_autoptr (GFileInfo) file_system_info = g_file_query_filesystem_info (
+        file, G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, NULL, NULL);
+
+    return file_system_info != NULL &&
+           g_file_info_get_attribute_boolean (file_system_info, G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE);
+}
+
 static void
 visit_directory (GFile            *dir,
                  SearchThreadData *data)
 {
-    g_autoptr (GPtrArray) date_range = NULL;
-    NautilusSearchTimeType type;
-    GFileEnumerator *enumerator;
-    GFileInfo *info;
-    GFile *child;
-    const char *mime_type, *display_name;
-    gdouble match;
-    gboolean is_hidden, found;
-    const char *id;
-    gboolean visited;
-    GDateTime *initial_date;
-    GDateTime *end_date;
-    gchar *uri;
+    const char *attributes = nautilus_query_has_mime_types (data->query)
+                             ? STD_ATTRIBUTES_WITH_CONTENT_TYPE : STD_ATTRIBUTES;
 
     /* Check for stale FUSE mounts before attempting enumeration.
      * This prevents hanging indefinitely on disconnected SSHFS mounts. */
@@ -315,90 +305,67 @@ visit_directory (GFile            *dir,
         }
     }
 
-    enumerator = g_file_enumerate_children (dir,
-                                            data->mime_types->len > 0 ?
-                                            STD_ATTRIBUTES ","
-                                            G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
-                                            G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE
-                                            :
-                                            STD_ATTRIBUTES
-                                            ,
-                                            G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
-                                            data->cancellable, NULL);
+    g_autoptr (GFileEnumerator) enumerator = g_file_enumerate_children (
+        dir,
+        attributes,
+        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
+        data->cancellable, NULL);
 
     if (enumerator == NULL)
     {
         return;
     }
 
-    type = nautilus_query_get_search_type (data->query);
-    date_range = nautilus_query_get_date_range (data->query);
-
+    NautilusSearchTimeType type = nautilus_query_get_search_type (data->query);
+    g_autoptr (GPtrArray) date_range = nautilus_query_get_date_range (data->query);
+    gboolean show_hidden = nautilus_query_get_show_hidden_files (data->query);
     gboolean recursion_enabled = nautilus_query_recursive (data->query);
     gboolean per_location_recursive_check = nautilus_query_recursive_local_only (data->query);
 
-    while ((info = g_file_enumerator_next_file (enumerator, data->cancellable, NULL)) != NULL)
+    GFileInfo *info;
+    while (g_file_enumerator_iterate (enumerator, &info, NULL, data->cancellable, NULL) &&
+           info != NULL)
     {
-        g_autoptr (GDateTime) mtime = NULL;
-        g_autoptr (GDateTime) atime = NULL;
-        g_autoptr (GDateTime) ctime = NULL;
-        gboolean recursive = FALSE;
+        const char *display_name = g_file_info_get_display_name (info);
 
-        display_name = g_file_info_get_display_name (info);
         if (display_name == NULL)
         {
-            goto next;
+            continue;
         }
 
-        if (!nautilus_query_get_show_hidden_files (data->query))
+        if (!show_hidden &&
+            (g_file_info_get_attribute_boolean (info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN) ||
+             g_file_info_get_attribute_boolean (info, G_FILE_ATTRIBUTE_STANDARD_IS_BACKUP)))
         {
-            is_hidden = g_file_info_get_attribute_boolean (info,
-                                                           G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN) ||
-                        g_file_info_get_attribute_boolean (info,
-                                                           G_FILE_ATTRIBUTE_STANDARD_IS_BACKUP);
-
-            if (is_hidden)
-            {
-                goto next;
-            }
+            continue;
         }
 
-        child = g_file_get_child (dir, g_file_info_get_name (info));
-        match = nautilus_query_matches_string (data->query, display_name);
-        found = (match > -1);
+        g_autoptr (GFile) child = g_file_get_child (dir, g_file_info_get_name (info));
+        gdouble match = nautilus_query_matches_string (data->query, display_name);
+        gboolean found = (match > -1);
 
-        if (found && data->mime_types->len > 0)
+        if (found && nautilus_query_has_mime_types (data->query))
         {
-            mime_type = g_file_info_get_attribute_string (info,
-                                                          G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE);
+            const char *mime_type = g_file_info_get_attribute_string (
+                info, G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE);
             if (mime_type == NULL)
             {
                 mime_type = g_file_info_get_attribute_string (info,
                                                               G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
             }
 
-            found = FALSE;
-
-            for (guint i = 0; mime_type != NULL && i < data->mime_types->len; i++)
-            {
-                if (g_content_type_is_a (mime_type, g_ptr_array_index (data->mime_types, i)))
-                {
-                    found = TRUE;
-                    break;
-                }
-            }
+            found = nautilus_query_matches_mime_type (data->query, mime_type);
         }
 
-        mtime = g_file_info_get_modification_date_time (info);
-        atime = g_file_info_get_access_date_time (info);
-        ctime = g_file_info_get_creation_date_time (info);
+        g_autoptr (GDateTime) mtime = g_file_info_get_modification_date_time (info);
+        g_autoptr (GDateTime) atime = g_file_info_get_access_date_time (info);
+        g_autoptr (GDateTime) ctime = g_file_info_get_creation_date_time (info);
 
         if (found && date_range != NULL)
         {
             GDateTime *target_date;
-
-            initial_date = g_ptr_array_index (date_range, 0);
-            end_date = g_ptr_array_index (date_range, 1);
+            GDateTime *initial_date = g_ptr_array_index (date_range, 0);
+            GDateTime *end_date = g_ptr_array_index (date_range, 1);
 
             switch (type)
             {
@@ -433,11 +400,9 @@ visit_directory (GFile            *dir,
 
         if (found)
         {
-            NautilusSearchHit *hit;
+            g_autofree gchar *uri = g_file_get_uri (child);
+            NautilusSearchHit *hit = nautilus_search_hit_new (uri);
 
-            uri = g_file_get_uri (child);
-            hit = nautilus_search_hit_new (uri);
-            g_free (uri);
             nautilus_search_hit_set_fts_rank (hit, match);
             nautilus_search_hit_set_modification_time (hit, mtime);
             nautilus_search_hit_set_access_time (hit, atime);
@@ -476,90 +441,59 @@ visit_directory (GFile            *dir,
         }
 
         if (recursion_enabled &&
-            g_file_info_get_file_type (info) == G_FILE_TYPE_DIRECTORY)
+            g_file_info_get_file_type (info) == G_FILE_TYPE_DIRECTORY &&
+            (!per_location_recursive_check || !file_is_remote (child)))
         {
-            if (per_location_recursive_check)
-            {
-                g_autoptr (GFileInfo) file_system_info = NULL;
+            const char *id = g_file_info_get_attribute_string (info, G_FILE_ATTRIBUTE_ID_FILE);
 
-                file_system_info = g_file_query_filesystem_info (child,
-                                                                 G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE,
-                                                                 NULL, NULL);
-                if (file_system_info != NULL)
-                {
-                    recursive = !g_file_info_get_attribute_boolean (file_system_info,
-                                                                    G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE);
-                }
-            }
-            else
+            if (id != NULL &&
+                !g_hash_table_contains (data->visited, id))
             {
-                recursive = TRUE;
+                g_hash_table_add (data->visited, g_strdup (id));
+                g_queue_push_tail (data->directories, g_steal_pointer (&child));
             }
         }
-
-        if (recursive)
-        {
-            id = g_file_info_get_attribute_string (info, G_FILE_ATTRIBUTE_ID_FILE);
-            visited = FALSE;
-            if (id)
-            {
-                if (g_hash_table_lookup_extended (data->visited,
-                                                  id, NULL, NULL))
-                {
-                    visited = TRUE;
-                }
-                else
-                {
-                    g_hash_table_insert (data->visited, g_strdup (id), NULL);
-                }
-            }
-
-            if (!visited)
-            {
-                g_queue_push_tail (data->directories, g_object_ref (child));
-            }
-        }
-
-        g_object_unref (child);
-next:
-        g_object_unref (info);
     }
-
-    g_object_unref (enumerator);
 }
 
 
 static gpointer
 search_thread_func (gpointer user_data)
 {
-    SearchThreadData *data;
-    GFile *dir;
-    GFileInfo *info;
-    const char *id;
+    SearchThreadData *data = user_data;
 
-    data = user_data;
     /* Insert id for toplevel directory into visited */
-    dir = g_queue_peek_head (data->directories);
-    info = g_file_query_info (dir, G_FILE_ATTRIBUTE_ID_FILE, 0, data->cancellable, NULL);
-    if (info)
+    g_autoptr (GFile) toplevel = nautilus_query_get_location (data->query);
+    g_autoptr (GFileInfo) info = g_file_query_info (
+        toplevel, G_FILE_ATTRIBUTE_ID_FILE, 0, data->cancellable, NULL);
+
+    if (info != NULL)
     {
-        id = g_file_info_get_attribute_string (info, G_FILE_ATTRIBUTE_ID_FILE);
-        if (id)
+        const char *id = g_file_info_get_attribute_string (info, G_FILE_ATTRIBUTE_ID_FILE);
+
+        if (id != NULL)
         {
             g_hash_table_insert (data->visited, g_strdup (id), NULL);
         }
-        g_object_unref (info);
     }
 
-    while (!g_cancellable_is_cancelled (data->cancellable) &&
-           (dir = g_queue_pop_head (data->directories)) != NULL)
+    visit_directory (toplevel, data);
+
+    while (!g_cancellable_is_cancelled (data->cancellable))
     {
+        g_autoptr (GFile) dir = g_queue_pop_head (data->directories);
+
+        if (dir == NULL)
+        {
+            break;
+        }
+
         visit_directory (dir, data);
-        g_object_unref (dir);
     }
 
     if (!g_cancellable_is_cancelled (data->cancellable))
     {
+        /* Send remaining non-batch sized results */
         send_batch_in_idle (data);
     }
 
@@ -605,8 +539,6 @@ search_engine_simple_start (NautilusSearchProvider *provider,
     data = search_thread_data_new (simple, simple->query);
 
     simple->active_search = data;
-
-    g_queue_push_tail (data->directories, g_steal_pointer (&location));
 
     simple->create_thread_timeout_id = g_timeout_add_once (CREATE_THREAD_DELAY_MS,
                                                            create_thread_timeout,

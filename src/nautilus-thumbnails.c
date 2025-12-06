@@ -41,8 +41,6 @@
 #include <signal.h>
 #include <libgnome-desktop/gnome-desktop-thumbnail.h>
 
-#include "nautilus-file-private.h"
-
 /* Should never be a reasonable actual mtime */
 #define INVALID_MTIME 0
 
@@ -60,14 +58,29 @@ static gboolean thumbnail_starter_cb (gpointer data);
 
 typedef struct
 {
+    GCancellable *cancellable;
+    GAsyncReadyCallback callback;
+    gpointer user_data;
+} ThumbnailCreationCallback;
+
+typedef struct
+{
     char *image_uri;
     char *mime_type;
     time_t original_file_mtime;
     time_t updated_file_mtime;
     gboolean is_animated;
+    GdkPixbuf *pixbuf;
+    GPtrArray *callbacks;
 
-    GCancellable *cancellable;
+    GError *error;
 } NautilusThumbnailInfo;
+
+typedef struct
+{
+    NautilusThumbnailInfo *info;
+    ThumbnailCreationCallback *callback;
+} ThumbnailCreationResult;
 
 /*
  * Thumbnail thread state.
@@ -119,21 +132,25 @@ get_file_mtime (const char *file_uri,
 }
 
 static void
+free_thumbnail_callback (ThumbnailCreationCallback *cb_data)
+{
+    g_clear_object (&cb_data->cancellable);
+    g_free (cb_data);
+}
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (ThumbnailCreationCallback, free_thumbnail_callback)
+
+static void
 free_thumbnail_info (NautilusThumbnailInfo *info)
 {
     g_free (info->image_uri);
     g_free (info->mime_type);
-    g_clear_object (&info->cancellable);
+    g_clear_object (&info->pixbuf);
+    g_clear_pointer (&info->callbacks, g_ptr_array_unref);
+    g_clear_error (&info->error);
     g_free (info);
 }
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (NautilusThumbnailInfo, free_thumbnail_info)
-
-static gpointer
-create_info_key (gpointer item)
-{
-    NautilusThumbnailInfo *info = item;
-    return info->image_uri;
-}
 
 static GnomeDesktopThumbnailSize
 get_thumbnail_scale (void)
@@ -227,35 +244,6 @@ nautilus_thumbnail_get_path_for_uri (const char *uri)
 }
 
 void
-nautilus_thumbnail_remove_from_queue (const char *file_uri)
-{
-    NautilusThumbnailInfo *info;
-
-    if (G_UNLIKELY (thumbnails_to_make == NULL))
-    {
-        return;
-    }
-
-    info = nautilus_hash_queue_find_item (thumbnails_to_make, file_uri);
-    if (info != NULL)
-    {
-        g_autoptr (NautilusFile) file = nautilus_file_get_by_uri (info->image_uri);
-
-        nautilus_hash_queue_remove (thumbnails_to_make, file_uri);
-        free_thumbnail_info (info);
-        nautilus_file_set_is_thumbnailing (file, FALSE);
-
-        return;
-    }
-
-    info = g_hash_table_lookup (currently_thumbnailing_hash, file_uri);
-    if (info != NULL)
-    {
-        g_cancellable_cancel (info->cancellable);
-    }
-}
-
-void
 nautilus_thumbnail_prioritize (const char *file_uri)
 {
     if (G_UNLIKELY (thumbnails_to_make == NULL))
@@ -337,58 +325,106 @@ nautilus_thumbnail_is_mimetype_limited_by_size (const char *mime_type)
 }
 
 gboolean
-nautilus_can_thumbnail (NautilusFile *file)
+nautilus_can_thumbnail (const gchar *uri,
+                        const gchar *mime_type,
+                        time_t       modified_time)
 {
-    GnomeDesktopThumbnailFactory *factory;
-    gboolean res;
-    char *uri;
-    time_t mtime;
-    const char *mime_type = nautilus_file_get_mime_type (file);
+    GnomeDesktopThumbnailFactory *factory = get_thumbnail_factory ();
 
-    uri = nautilus_file_get_uri (file);
-    mtime = nautilus_file_get_mtime (file);
+    return gnome_desktop_thumbnail_factory_can_thumbnail (factory,
+                                                          uri,
+                                                          mime_type,
+                                                          modified_time);
+}
 
-    factory = get_thumbnail_factory ();
-    res = gnome_desktop_thumbnail_factory_can_thumbnail (factory,
-                                                         uri,
-                                                         mime_type,
-                                                         mtime);
-    g_free (uri);
+static void
+handle_cancelled_callbacks (NautilusThumbnailInfo *info)
+{
+    for (guint i = 0; i < info->callbacks->len; i++)
+    {
+        ThumbnailCreationCallback *thumbnail_callback = info->callbacks->pdata[i];
+        ThumbnailCreationResult res = { .info = info, .callback = thumbnail_callback };
 
-    return res;
+        if (thumbnail_callback->cancellable != NULL &&
+            g_cancellable_is_cancelled (thumbnail_callback->cancellable))
+        {
+            g_debug ("Cancelled thumbnail: %s", info->image_uri);
+
+            if (thumbnail_callback->callback != NULL)
+            {
+                (*thumbnail_callback->callback) (NULL,
+                                                 (GAsyncResult *) &res,
+                                                 thumbnail_callback->user_data);
+            }
+
+            g_ptr_array_remove_index_fast (info->callbacks, i--);
+        }
+    }
+}
+
+static void
+handle_callbacks_and_free (NautilusThumbnailInfo *info)
+{
+    for (uint i = 0; i < info->callbacks->len; i++)
+    {
+        ThumbnailCreationCallback *thumbnail_callback = info->callbacks->pdata[i];
+        ThumbnailCreationResult res = { .info = info, .callback = thumbnail_callback };
+
+        if (thumbnail_callback->callback != NULL)
+        {
+            (*thumbnail_callback->callback) (NULL,
+                                             (GAsyncResult *) &res,
+                                             thumbnail_callback->user_data);
+        }
+    }
+
+    free_thumbnail_info (info);
 }
 
 void
-nautilus_create_thumbnail (NautilusFile *file)
+nautilus_create_thumbnail_async (const gchar         *uri,
+                                 const gchar         *mime_type,
+                                 time_t               modified_time,
+                                 GCancellable        *cancellable,
+                                 GAsyncReadyCallback  callback,
+                                 gpointer             user_data)
 {
-    time_t file_mtime = 0;
-
-    nautilus_file_set_is_thumbnailing (file, TRUE);
+    g_return_if_fail (uri != NULL && *uri != '\0');
 
     g_autoptr (NautilusThumbnailInfo) info = g_new0 (NautilusThumbnailInfo, 1);
-    info->image_uri = nautilus_file_get_uri (file);
-    info->mime_type = g_strdup (nautilus_file_get_mime_type (file));
-    info->cancellable = g_cancellable_new ();
+    g_autoptr (ThumbnailCreationCallback) cb_data = g_new0 (ThumbnailCreationCallback, 1);
 
-    /* Hopefully the NautilusFile will already have the image file mtime,
+    info->image_uri = g_strdup (uri);
+    info->mime_type = g_strdup (mime_type);
+    info->callbacks = g_ptr_array_new_with_free_func ((GDestroyNotify) free_thumbnail_callback);
+
+    cb_data->cancellable = cancellable != NULL ? g_object_ref (cancellable) : NULL;
+    cb_data->callback = callback;
+    cb_data->user_data = user_data;
+
+    if (cancellable != NULL &&
+        g_cancellable_is_cancelled (cancellable))
+    {
+        /* Call the callback immediately */
+        g_ptr_array_add (info->callbacks, g_steal_pointer (&cb_data));
+        handle_cancelled_callbacks (info);
+
+        return;
+    }
+
+    /* Hopefully the caller will already have the image file mtime,
      *  so we can just use that. Otherwise we have to get it ourselves. */
-    if (file->details->got_file_info &&
-        file->details->file_info_is_up_to_date &&
-        file->details->mtime != 0)
+    if (modified_time == 0)
     {
-        file_mtime = file->details->mtime;
-    }
-    else
-    {
-        get_file_mtime (info->image_uri, &file_mtime);
+        get_file_mtime (info->image_uri, &modified_time);
     }
 
-    info->original_file_mtime = file_mtime;
-    info->updated_file_mtime = file_mtime;
+    info->original_file_mtime = modified_time;
+    info->updated_file_mtime = modified_time;
 
     if (G_UNLIKELY (thumbnails_to_make == NULL))
     {
-        thumbnails_to_make = nautilus_hash_queue_new (g_str_hash, g_str_equal, create_info_key, NULL);
+        thumbnails_to_make = nautilus_hash_queue_new (g_str_hash, g_str_equal, NULL, NULL);
         currently_thumbnailing_hash = g_hash_table_new (g_str_hash,
                                                         g_str_equal);
     }
@@ -407,7 +443,10 @@ nautilus_create_thumbnail (NautilusFile *file)
         /* Add the thumbnail to the list. */
         g_debug ("(Main Thread) Adding thumbnail: %s",
                  info->image_uri);
-        nautilus_hash_queue_enqueue (thumbnails_to_make, g_steal_pointer (&info));
+
+        g_ptr_array_add (info->callbacks, g_steal_pointer (&cb_data));
+        nautilus_hash_queue_enqueue (thumbnails_to_make, info->image_uri, info);
+        g_steal_pointer (&info);
 
         /* If we didn't schedule the thumbnail function to start on idle, do
          *  that now. We don't want to start it until all the other work is
@@ -424,30 +463,62 @@ nautilus_create_thumbnail (NautilusFile *file)
 
         /* The file in the queue might need a new original mtime */
         existing_info->updated_file_mtime = info->original_file_mtime;
+        g_ptr_array_add (existing_info->callbacks, g_steal_pointer (&cb_data));
     }
+}
+
+GdkPixbuf *
+nautilus_create_thumbnail_finish (GAsyncResult  *res,
+                                  GError       **error)
+{
+    ThumbnailCreationResult *result = (ThumbnailCreationResult *) res;
+    ThumbnailCreationCallback *callback = result->callback;
+    NautilusThumbnailInfo *info = result->info;
+
+    if (callback->cancellable != NULL &&
+        g_cancellable_is_cancelled (callback->cancellable))
+    {
+        if (error != NULL)
+        {
+            *error = g_error_new (G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancelled");
+        }
+
+        return NULL;
+    }
+
+    if (info->error != NULL)
+    {
+        if (error != NULL)
+        {
+            *error = g_error_copy (info->error);
+        }
+
+        return NULL;
+    }
+
+    return info->pixbuf != NULL ? g_object_ref (info->pixbuf) : NULL;
 }
 
 static void
 thumbnail_finalize (NautilusThumbnailInfo *info)
 {
-    g_autoptr (NautilusFile) file = nautilus_file_get_by_uri (info->image_uri);
-
-    nautilus_file_set_is_thumbnailing (file, FALSE);
     g_hash_table_remove (currently_thumbnailing_hash, info->image_uri);
     running_threads -= 1;
+
+    handle_cancelled_callbacks (info);
 
     /*  If the original file mtime of the request changed, then
      *  we need to redo the thumbnail. */
     if (info->original_file_mtime == info->updated_file_mtime ||
-        g_cancellable_is_cancelled (info->cancellable))
+        info->callbacks->len == 0)
     {
-        free_thumbnail_info (info);
+        handle_callbacks_and_free (info);
     }
     else
     {
         info->original_file_mtime = info->updated_file_mtime;
 
-        nautilus_hash_queue_enqueue (thumbnails_to_make, info);
+        nautilus_hash_queue_enqueue (thumbnails_to_make, info->image_uri, info);
     }
 
     if (nautilus_hash_queue_is_empty (thumbnails_to_make))
@@ -510,23 +581,11 @@ thumbnail_generated_cb (GObject      *source_object,
     GnomeDesktopThumbnailFactory *thumbnail_factory = GNOME_DESKTOP_THUMBNAIL_FACTORY (source_object);
     NautilusThumbnailInfo *info = data;
     g_autoptr (GError) error = NULL;
-    g_autoptr (GdkPixbuf) pixbuf = NULL;
-    g_autoptr (NautilusFile) file = NULL;
+    GdkPixbuf *pixbuf = NULL;
 
     pixbuf = gnome_desktop_thumbnail_factory_generate_thumbnail_finish (thumbnail_factory,
                                                                         result,
                                                                         &error);
-
-    if (g_cancellable_is_cancelled (info->cancellable))
-    {
-        g_debug ("(Thumbnail Async Thread) Cancelled thumbnail: %s",
-                 info->image_uri);
-
-        thumbnail_finalize (info);
-        return;
-    }
-
-    file = nautilus_file_get_by_uri (info->image_uri);
 
     if (pixbuf != NULL)
     {
@@ -540,30 +599,29 @@ thumbnail_generated_cb (GObject      *source_object,
          *  only the written thumbnail file.
          */
         gdk_pixbuf_set_option (pixbuf, "tEXt::Thumb::MTime", mtime);
-        nautilus_file_set_thumbnail (file, pixbuf);
+        info->pixbuf = pixbuf;
 
         gnome_desktop_thumbnail_factory_save_thumbnail_async (thumbnail_factory,
                                                               pixbuf,
                                                               info->image_uri,
                                                               info->updated_file_mtime,
-                                                              info->cancellable,
+                                                              NULL,
                                                               thumbnail_saved_cb,
                                                               info);
     }
     else
     {
+        info->error = g_error_copy (error);
         g_debug ("(Thumbnail Async Thread) Thumbnail failed: %s (%s)",
                  info->image_uri, error->message);
 
         gnome_desktop_thumbnail_factory_create_failed_thumbnail_async (thumbnail_factory,
                                                                        info->image_uri,
                                                                        info->updated_file_mtime,
-                                                                       info->cancellable,
+                                                                       NULL,
                                                                        thumbnail_failed_cb,
                                                                        info);
     }
-
-    nautilus_file_changed (file);
 }
 
 /* This function is added as a very low priority idle function to start the
@@ -599,6 +657,15 @@ thumbnail_starter_cb (gpointer data)
         info = nautilus_hash_queue_peek_head (thumbnails_to_make);
         nautilus_hash_queue_remove (thumbnails_to_make, info->image_uri);
 
+        handle_cancelled_callbacks (info);
+
+        if (info->callbacks->len == 0)
+        {
+            free_thumbnail_info (info);
+
+            continue;
+        }
+
         current_orig_mtime = info->updated_file_mtime;
         time (&current_time);
 
@@ -614,7 +681,7 @@ thumbnail_starter_cb (gpointer data)
             backoff_time = THUMBNAIL_CREATION_DELAY_SECS - (current_time - current_orig_mtime);
             backoff_time_min = MIN (backoff_time, backoff_time_min);
 
-            nautilus_hash_queue_enqueue (thumbnails_to_make, info);
+            nautilus_hash_queue_enqueue (thumbnails_to_make, info->image_uri, info);
             ignored_thumbnails += 1;
             continue;
         }
@@ -629,7 +696,7 @@ thumbnail_starter_cb (gpointer data)
         gnome_desktop_thumbnail_factory_generate_thumbnail_async (thumbnail_factory,
                                                                   info->image_uri,
                                                                   info->mime_type,
-                                                                  info->cancellable,
+                                                                  NULL,
                                                                   thumbnail_generated_cb,
                                                                   info);
     }

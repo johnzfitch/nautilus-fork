@@ -196,14 +196,13 @@ void               emit_change_signals_for_all_files_in_all_directories (void);
 void               nautilus_directory_emit_done_loading               (NautilusDirectory         *directory);
 void               nautilus_directory_emit_load_error                 (NautilusDirectory         *directory,
 								       GError                    *error);
-NautilusDirectory *nautilus_directory_get_internal                    (GFile                     *location,
-								       gboolean                   create);
 char *             nautilus_directory_get_name_for_self_as_new_file   (NautilusDirectory         *directory);
 Request            nautilus_directory_set_up_request                  (NautilusFileAttributes     file_attributes);
 
 /* Interface to the file list. */
 NautilusFile *     nautilus_directory_find_file_by_name               (NautilusDirectory         *directory,
 								       const char                *filename);
+NautilusFile *     nautilus_directory_new_as_vfs_file                 (NautilusDirectory         *directory);
 
 void               nautilus_directory_add_file                        (NautilusDirectory         *directory,
 								       NautilusFile              *file);
@@ -214,8 +213,6 @@ FileMonitors *     nautilus_directory_remove_file_monitors            (NautilusD
 void               nautilus_directory_add_file_monitors               (NautilusDirectory         *directory,
 								       NautilusFile              *file,
 								       FileMonitors              *monitors);
-void               nautilus_directory_add_file                        (NautilusDirectory         *directory,
-								       NautilusFile              *file);
 GList *            nautilus_directory_begin_file_name_change          (NautilusDirectory         *directory,
 								       NautilusFile              *file);
 void               nautilus_directory_end_file_name_change            (NautilusDirectory         *directory,
