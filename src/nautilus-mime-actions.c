@@ -161,20 +161,15 @@ struct
             "audio/AMR",
             "audio/AMR-WB",
             "audio/basic",
-            "audio/dv",
-            "audio/eac3",
             "audio/flac",
             "audio/m4a",
             "audio/midi",
-            "audio/mp1",
             "audio/mp2",
             "audio/mp3",
             "audio/mp4",
             "audio/mpeg",
             "audio/mpegurl",
-            "audio/mpg",
             "audio/ogg",
-            "audio/opus",
             "audio/prs.sid",
             "audio/scpls",
             "audio/vnd.rn-realaudio",
@@ -190,28 +185,17 @@ struct
             "audio/x-m4b",
             "audio/x-matroska",
             "audio/x-mod",
-            "audio/x-mp1",
             "audio/x-mp2",
             "audio/x-mp3",
             "audio/x-mpg",
             "audio/x-mpeg",
             "audio/x-mpegurl",
-            "audio/x-ms-asf",
             "audio/x-ms-asx",
-            "audio/x-ms-wax",
             "audio/x-ms-wma",
             "audio/x-musepack",
             "audio/x-opus+ogg",
-            "audio/x-pn-aiff",
-            "audio/x-pn-au",
             "audio/x-pn-realaudio",
-            "audio/x-pn-realaudio-plugin",
-            "audio/x-pn-wav",
-            "audio/x-pn-windows-acm",
-            "audio/x-realaudio",
-            "audio/x-real-audio",
             "audio/x-s3m",
-            "audio/x-sbc",
             "audio/x-scpls",
             "audio/x-shorten",
             "audio/x-speex",
@@ -221,7 +205,6 @@ struct
             "audio/x-wavpack",
             "audio/x-vorbis",
             "audio/x-vorbis+ogg",
-            "application/x-flac",
             NULL
         }
     },
@@ -308,8 +291,6 @@ struct
             "application/vnd.ms-wpl",
             "application/vnd.rn-realmedia",
             "application/vnd.rn-realmedia-vbr",
-            "application/x-extension-m4a",
-            "application/x-extension-mp4",
             "application/x-flash-video",
             "application/x-matroska",
             "application/x-netshow-channel",
@@ -317,7 +298,6 @@ struct
             "application/x-shorten",
             "image/vnd.rn-realpix",
             "image/x-pict",
-            "misc/ultravox",
             "text/x-google-video-pointer",
             "video/3gp",
             "video/3gpp",
@@ -343,7 +323,6 @@ struct
             "video/webm",
             "video/x-anim",
             "video/x-avi",
-            "video/x-flc",
             "video/x-fli",
             "video/x-flic",
             "video/x-flv",
@@ -355,7 +334,6 @@ struct
             "video/x-mpeg2",
             "video/x-ms-asf",
             "video/x-ms-asf-plugin",
-            "video/x-ms-asx",
             "video/x-msvideo",
             "video/x-ms-wm",
             "video/x-ms-wmv",
@@ -366,7 +344,6 @@ struct
             "video/x-real-video",
             "video/x-theora",
             "video/x-theora+ogg",
-            "video/x-totem-stream",
             "audio/x-pn-realaudio",
             NULL
         }
@@ -1739,7 +1716,8 @@ activate_files_internal (ActivateParameters *parameters)
             if (parameters->flags & (NAUTILUS_OPEN_FLAG_NEW_WINDOW | NAUTILUS_OPEN_FLAG_NEW_TAB))
             {
                 nautilus_application_open_location_full (NAUTILUS_APPLICATION (g_application_get_default ()),
-                                                         location_with_permissions, parameters->flags, NULL, NULL, parameters->slot, NULL);
+                                                         location_with_permissions, parameters->flags,
+                                                         NULL, NULL);
             }
             else
             {
@@ -2342,47 +2320,6 @@ nautilus_mime_activate_files (GtkWindow          *parent_window,
     {
         activate_regular_files (parameters);
     }
-}
-
-/**
- * nautilus_mime_activate_file:
- *
- * Activate a file in this view. This might involve switching the displayed
- * location for the current window, or launching an application.
- * @view: FMDirectoryView in question.
- * @file: A NautilusFile representing the file in this view to activate.
- * @use_new_window: Should this item be opened in a new window?
- *
- **/
-
-void
-nautilus_mime_activate_file (GtkWindow          *parent_window,
-                             NautilusWindowSlot *slot,
-                             NautilusFile       *file,
-                             const char         *launch_directory,
-                             NautilusOpenFlags   flags)
-{
-    GList *files;
-
-    g_return_if_fail (NAUTILUS_IS_FILE (file));
-
-    files = g_list_prepend (NULL, file);
-    nautilus_mime_activate_files (parent_window, slot, files, launch_directory, flags, FALSE);
-    g_list_free (files);
-}
-
-guint
-nautilus_mime_types_get_number_of_groups (void)
-{
-    return G_N_ELEMENTS (mimetype_groups);
-}
-
-const gchar *
-nautilus_mime_types_group_get_name (guint group_index)
-{
-    g_return_val_if_fail (group_index < G_N_ELEMENTS (mimetype_groups), NULL);
-
-    return gettext (mimetype_groups[group_index].name);
 }
 
 GPtrArray *

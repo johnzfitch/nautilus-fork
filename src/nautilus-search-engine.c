@@ -48,12 +48,12 @@ struct _NautilusSearchEngine
     NautilusSearchProvider *searchcache;
 
     GHashTable *uris;
-    guint providers_running;
+    guint providers_started;
     guint providers_finished;
-    guint providers_error;
 
     NautilusQuery *query;
     gboolean running;
+    gboolean starting;
     gboolean restart;
 };
 
@@ -66,27 +66,18 @@ enum
 };
 static GParamSpec *properties[N_PROPERTIES];
 
-static void nautilus_search_provider_init (NautilusSearchProviderInterface *iface);
+enum
+{
+    HITS_ADDED,
+    SEARCH_FINISHED,
+    LAST_SIGNAL
+};
+static guint signals[LAST_SIGNAL];
 
-G_DEFINE_TYPE_WITH_CODE (NautilusSearchEngine,
-                         nautilus_search_engine,
-                         G_TYPE_OBJECT,
-                         G_IMPLEMENT_INTERFACE (NAUTILUS_TYPE_SEARCH_PROVIDER,
-                                                nautilus_search_provider_init))
+G_DEFINE_FINAL_TYPE (NautilusSearchEngine, nautilus_search_engine, G_TYPE_OBJECT)
 
 static void
-search_engine_start_real_setup (NautilusSearchEngine *self)
-{
-    self->providers_running = 0;
-    self->providers_finished = 0;
-    self->providers_error = 0;
-
-    self->restart = FALSE;
-
-    g_debug ("Search engine start real setup");
-
-    g_object_ref (self);
-}
+check_providers_status (NautilusSearchEngine *self);
 
 static void
 search_engine_start_provider (NautilusSearchProvider *provider,
@@ -98,70 +89,59 @@ search_engine_start_provider (NautilusSearchProvider *provider,
     }
     else if (nautilus_search_provider_start (provider, self->query))
     {
-        self->providers_running++;
+        self->providers_started++;
     }
 }
 
 static void
 search_engine_start_real (NautilusSearchEngine *self)
 {
-    search_engine_start_real_setup (self);
+    g_return_if_fail (self->running);
 
+    self->providers_started = 0;
+    self->providers_finished = 0;
+
+    self->starting = TRUE;
     search_engine_start_provider (self->localsearch, self);
     search_engine_start_provider (self->model, self);
     search_engine_start_provider (self->recent, self);
     search_engine_start_provider (self->simple, self);
     search_engine_start_provider (self->searchcache, self);
+    self->starting = FALSE;
+
+    /* Providers could already be finished */
+    check_providers_status (self);
 }
 
-static gboolean
-nautilus_search_engine_start (NautilusSearchProvider *provider,
-                              NautilusQuery          *query)
+void
+nautilus_search_engine_start (NautilusSearchEngine *self,
+                              NautilusQuery        *query)
 {
-    g_return_val_if_fail (query != NULL, FALSE);
+    g_return_if_fail (query != NULL);
 
     g_autoptr (NautilusQuery) query_to_copy = g_object_ref (query);
-
-    NautilusSearchEngine *self = NAUTILUS_SEARCH_ENGINE (provider);
-
-    g_debug ("Search engine start");
-    guint num_finished = self->providers_error + self->providers_finished;
 
     g_clear_object (&self->query);
     self->query = nautilus_query_copy (query_to_copy);
 
     if (self->running)
     {
-        if (num_finished == self->providers_running &&
-            self->restart)
-        {
-            search_engine_start_real (self);
-        }
-
-        return TRUE;
+        self->restart = TRUE;
+        return;
     }
 
+    /* Keep reference on self while running */
+    g_object_ref (self);
     self->running = TRUE;
-
     g_object_notify (G_OBJECT (self), "running");
 
-    if (num_finished < self->providers_running)
-    {
-        self->restart = TRUE;
-    }
-    else
-    {
-        search_engine_start_real (self);
-    }
-
-    return TRUE;
+    g_debug ("Search engine start");
+    search_engine_start_real (self);
 }
 
-static void
-nautilus_search_engine_stop (NautilusSearchProvider *provider)
+void
+nautilus_search_engine_stop (NautilusSearchEngine *self)
 {
-    NautilusSearchEngine *self = NAUTILUS_SEARCH_ENGINE (provider);
-
     g_debug ("Search engine stop");
 
     if (self->localsearch != NULL)
@@ -185,10 +165,7 @@ nautilus_search_engine_stop (NautilusSearchProvider *provider)
         nautilus_search_provider_stop (self->searchcache);
     }
 
-    self->running = FALSE;
     self->restart = FALSE;
-
-    g_object_notify (G_OBJECT (self), "running");
 }
 
 static void
@@ -220,73 +197,50 @@ search_provider_hits_added (NautilusSearchProvider *provider,
 
     if (added->len > 0)
     {
-        nautilus_search_provider_hits_added (NAUTILUS_SEARCH_PROVIDER (self),
-                                             g_steal_pointer (&added));
+        g_signal_emit (self, signals[HITS_ADDED], 0, added);
     }
 }
 
 static void
 check_providers_status (NautilusSearchEngine *self)
 {
-    guint num_finished;
+    g_assert (self->running);
 
-    num_finished = self->providers_error + self->providers_finished;
-
-    if (num_finished < self->providers_running)
+    if (self->starting || self->providers_finished < self->providers_started)
     {
         return;
     }
 
-    if (num_finished == self->providers_error)
+    if (self->restart)
     {
-        g_debug ("Search engine error");
-        nautilus_search_provider_error (NAUTILUS_SEARCH_PROVIDER (self),
-                                        _("Unable to complete the requested search"));
+        g_debug ("Search engine finished and restarting");
     }
     else
     {
-        if (self->restart)
-        {
-            g_debug ("Search engine finished and restarting");
-        }
-        else
-        {
-            g_debug ("Search engine finished");
-        }
-        nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (self),
-                                           self->restart ? NAUTILUS_SEARCH_PROVIDER_STATUS_RESTARTING :
-                                                           NAUTILUS_SEARCH_PROVIDER_STATUS_NORMAL);
-    }
+        g_debug ("Search engine finished");
 
-    self->running = FALSE;
-    g_object_notify (G_OBJECT (self), "running");
+        g_signal_emit (self, signals[SEARCH_FINISHED], 0);
+    }
 
     g_hash_table_remove_all (self->uris);
 
     if (self->restart)
     {
-        nautilus_search_engine_start (NAUTILUS_SEARCH_PROVIDER (self), self->query);
+        self->restart = FALSE;
+        g_debug ("Search engine restarting");
+        search_engine_start_real (self);
     }
+    else
+    {
+        self->running = FALSE;
+        g_object_notify (G_OBJECT (self), "running");
 
-    g_object_unref (self);
+        g_object_unref (self);
+    }
 }
 
 static void
-search_provider_error (NautilusSearchProvider *provider,
-                       const char             *error_message,
-                       NautilusSearchEngine   *self)
-{
-    g_debug ("Search provider error: %s", error_message);
-
-    self->providers_error++;
-
-    check_providers_status (self);
-}
-
-static void
-search_provider_finished (NautilusSearchProvider       *provider,
-                          NautilusSearchProviderStatus  status,
-                          NautilusSearchEngine         *self)
+search_provider_finished (NautilusSearchEngine *self)
 {
     g_debug ("Search provider finished");
 
@@ -312,12 +266,9 @@ setup_provider (NautilusSearchEngine    *self,
             g_signal_connect (*provider_pointer, "hits-added",
                               G_CALLBACK (search_provider_hits_added),
                               self);
-            g_signal_connect (*provider_pointer, "finished",
-                              G_CALLBACK (search_provider_finished),
-                              self);
-            g_signal_connect (*provider_pointer, "error",
-                              G_CALLBACK (search_provider_error),
-                              self);
+            g_signal_connect_swapped (*provider_pointer, "provider-finished",
+                                      G_CALLBACK (search_provider_finished),
+                                      self);
         }
     }
     else
@@ -349,13 +300,6 @@ nautilus_search_engine_set_search_type (NautilusSearchEngine *self,
     setup_provider (self, &self->searchcache, NAUTILUS_SEARCH_TYPE_SEARCHCACHE,
                     (CreateFunc) nautilus_search_engine_searchcache_new);
 
-}
-
-static void
-nautilus_search_provider_init (NautilusSearchProviderInterface *iface)
-{
-    iface->start = nautilus_search_engine_start;
-    iface->stop = nautilus_search_engine_stop;
 }
 
 static void
@@ -452,6 +396,33 @@ nautilus_search_engine_class_init (NautilusSearchEngineClass *class)
                           G_PARAM_WRITABLE);
 
     g_object_class_install_properties (object_class, N_PROPERTIES, properties);
+
+    /**
+     * NautilusSearchEngine::hits-added:
+     *
+     * @engine: The engine which emitted the signal.
+     * @hits: (transfer none): #GPtrArray of #NautilusSearchHit
+     *
+     * Emitted when search hits are found.
+     */
+    signals[HITS_ADDED] = g_signal_new (
+        "hits-added", G_TYPE_FROM_CLASS (object_class),
+        G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+        g_cclosure_marshal_VOID__POINTER,
+        G_TYPE_NONE, 1, G_TYPE_POINTER);
+
+    /**
+     * NautilusSearchEngine::search-finished:
+     *
+     * @engine: The engine which emitted the signal.
+     *
+     * Emitted when the search finishes. Not emitted in-between restarts.
+     */
+    signals[SEARCH_FINISHED] = g_signal_new (
+        "search-finished", G_TYPE_FROM_CLASS (object_class),
+        G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+        g_cclosure_marshal_VOID__VOID,
+        G_TYPE_NONE, 0);
 }
 
 static void

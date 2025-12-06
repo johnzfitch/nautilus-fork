@@ -426,7 +426,26 @@ on_filename_entry_focus_leave (NautilusFileChooser *self)
 static void
 on_filename_entry_changed (NautilusFileChooser *self)
 {
-    const char *current_text = gtk_editable_get_text (GTK_EDITABLE (self->filename_entry));
+    GtkEditable *editable = GTK_EDITABLE (self->filename_entry);
+    const char *current_text = gtk_editable_get_text (editable);
+    char *check_text_ptr = strchr (current_text, '\n');
+
+    if (check_text_ptr != NULL)
+    {
+        g_autofree char *clean_text = g_strdup (current_text);
+
+
+        check_text_ptr = clean_text + (check_text_ptr - current_text);
+        do
+        {
+            *check_text_ptr = ' ';
+        }
+        while ((check_text_ptr = strchr (clean_text, '\n')) != NULL);
+
+
+        gtk_editable_set_text (editable, clean_text);
+    }
+
     gboolean is_not_suggested_text = (g_strcmp0 (self->suggested_name, current_text) != 0 &&
                                       self->suggested_name != NULL);
 
@@ -723,9 +742,8 @@ nautilus_file_chooser_constructed (GObject *object)
 
     NautilusFileChooser *self = (NautilusFileChooser *) object;
 
-    /* Setup slot.
-     * We hold a reference to control its lifetime with relation to bindings. */
-    self->slot = g_object_ref (nautilus_window_slot_new (self->mode));
+    /* Setup slot. */
+    self->slot = nautilus_window_slot_new (self->mode);
     g_signal_connect_swapped (self->slot, "notify::location", G_CALLBACK (on_location_changed), self);
     adw_bin_set_child (self->slot_container, GTK_WIDGET (self->slot));
     nautilus_window_slot_set_active (self->slot, TRUE);
