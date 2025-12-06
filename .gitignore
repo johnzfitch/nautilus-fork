@@ -38,6 +38,29 @@ IMPLEMENTATION-STATUS.md
 INFO-PANEL-APPROACHES.md
 RUST-IMPLEMENTATION-SUMMARY.md
 RUST-INFO-PANEL-GUIDE.md
+ANIMATED-WEBP-PLAN.md
+BUILDING-OMARCHY.md
+CONTRIBUTING-OMARCHY.md
+INFO-PANEL-ARCHITECTURE.md
+INFO-PANEL-CODE-REFERENCE.md
+INFO-PANEL-PLAN.md
+OMARCHY-FEATURES.md
+OMARCHY-SETUP.md
+PHASE2-STATUS.md
+
+# Test files and reports
+STRESS-TEST-*.md
+STRESS-TEST-*.txt
+STRESS-TESTING-GUIDE.md
+TEST-*.md
+TEST-*.txt
+TESTING-INDEX.md
+stress-test*.py
+stress-test*.sh
+stress-test*.log
+test-*.sh
+edge-case-stress-test.py
+advanced-stress-test.py
 
 # Build artifacts
 nautilus-info-panel-rs/
