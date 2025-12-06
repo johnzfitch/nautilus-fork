@@ -40,4 +40,7 @@ void               nautilus_sidebar_set_show_trash             (NautilusSidebar 
 
 char *nautilus_sidebar_get_location_title (NautilusSidebar *sidebar);
 
+void nautilus_sidebar_set_searchcache_label_visible (NautilusSidebar *sidebar,
+                                                      gboolean         visible);
+
 G_END_DECLS

@@ -89,4 +89,8 @@ void nautilus_window_search (NautilusWindow *window,
 void nautilus_window_back_or_forward_in_new_tab (NautilusWindow              *window,
                                                  NautilusNavigationDirection  back);
 
+void nautilus_window_update_searchcache_status (NautilusWindow *window,
+                                                const gchar    *text,
+                                                const gchar    *css_class);
+
 G_END_DECLS

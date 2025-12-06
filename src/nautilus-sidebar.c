@@ -38,6 +38,7 @@
 #include "nautilus-trash-monitor.h"
 #include "nautilus-ui-utilities.h"
 #include "nautilus-window-slot.h"
+#include "nautilus-window.h"
 
 #ifdef GDK_WINDOWING_X11
 #include <gdk/x11/gdkx.h>
@@ -3569,18 +3570,31 @@ static void
 update_searchcache_status_label (NautilusSidebar *sidebar)
 {
     gboolean is_online = check_searchcache_status ();
+    const gchar *text;
+    const gchar *css_class;
 
     if (is_online)
     {
-        gtk_label_set_text (GTK_LABEL (sidebar->searchcache_status_label), "search-cache: online");
-        gtk_widget_remove_css_class (sidebar->searchcache_status_label, "error");
-        gtk_widget_add_css_class (sidebar->searchcache_status_label, "success");
+        text = "search-cache: online";
+        css_class = "success";
     }
     else
     {
-        gtk_label_set_text (GTK_LABEL (sidebar->searchcache_status_label), "search-cache: offline");
-        gtk_widget_remove_css_class (sidebar->searchcache_status_label, "success");
-        gtk_widget_add_css_class (sidebar->searchcache_status_label, "error");
+        text = "search-cache: offline";
+        css_class = "error";
+    }
+
+    /* Update sidebar label */
+    gtk_label_set_text (GTK_LABEL (sidebar->searchcache_status_label), text);
+    gtk_widget_remove_css_class (sidebar->searchcache_status_label, "error");
+    gtk_widget_remove_css_class (sidebar->searchcache_status_label, "success");
+    gtk_widget_add_css_class (sidebar->searchcache_status_label, css_class);
+
+    /* Also update action bar label in the window */
+    GtkWidget *window = GTK_WIDGET (gtk_widget_get_root (GTK_WIDGET (sidebar)));
+    if (NAUTILUS_IS_WINDOW (window))
+    {
+        nautilus_window_update_searchcache_status (NAUTILUS_WINDOW (window), text, css_class);
     }
 }
 
@@ -3757,10 +3771,17 @@ nautilus_sidebar_init (NautilusSidebar *sidebar)
     /* Create search-cache status indicator */
     sidebar->searchcache_status_label = gtk_label_new ("");
     gtk_widget_set_halign (sidebar->searchcache_status_label, GTK_ALIGN_START);
-    gtk_widget_set_margin_start (sidebar->searchcache_status_label, 12);
-    gtk_widget_set_margin_end (sidebar->searchcache_status_label, 12);
+    gtk_widget_set_margin_start (sidebar->searchcache_status_label, 6);
+    gtk_widget_set_margin_end (sidebar->searchcache_status_label, 6);
     gtk_widget_set_margin_top (sidebar->searchcache_status_label, 6);
     gtk_widget_set_margin_bottom (sidebar->searchcache_status_label, 6);
+
+    /* Enable line wrapping and natural sizing for narrow sidebars */
+    gtk_label_set_wrap (GTK_LABEL (sidebar->searchcache_status_label), TRUE);
+    gtk_label_set_wrap_mode (GTK_LABEL (sidebar->searchcache_status_label), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_max_width_chars (GTK_LABEL (sidebar->searchcache_status_label), 15);
+    gtk_label_set_xalign (GTK_LABEL (sidebar->searchcache_status_label), 0.0);
+    gtk_widget_set_hexpand (sidebar->searchcache_status_label, FALSE);
 
     /* Add CSS classes for pill styling */
     gtk_widget_add_css_class (sidebar->searchcache_status_label, "pill");
@@ -3989,6 +4010,18 @@ nautilus_sidebar_size_allocate (GtkWidget *widget,
     if (sidebar->rename_popover)
     {
         gtk_popover_present (GTK_POPOVER (sidebar->rename_popover));
+    }
+}
+
+void
+nautilus_sidebar_set_searchcache_label_visible (NautilusSidebar *sidebar,
+                                                 gboolean         visible)
+{
+    g_return_if_fail (NAUTILUS_IS_PLACES_SIDEBAR (sidebar));
+
+    if (sidebar->searchcache_status_label != NULL)
+    {
+        gtk_widget_set_visible (sidebar->searchcache_status_label, visible);
     }
 }
 

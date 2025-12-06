@@ -183,6 +183,19 @@
                             <property name="window-slot" bind-source="NautilusWindow" bind-property="active-slot" bind-flags="sync-create"/>
                           </object>
                         </child>
+                        <child type="center">
+                          <object class="GtkLabel" id="searchcache_status_actionbar_label">
+                            <property name="visible">True</property>
+                            <property name="halign">start</property>
+                            <property name="wrap">True</property>
+                            <property name="wrap-mode">word-char</property>
+                            <property name="max-width-chars">15</property>
+                            <style>
+                              <class name="pill"/>
+                              <class name="sidebar-label"/>
+                            </style>
+                          </object>
+                        </child>
                         <child type="end">
                           <object class="NautilusViewControls">
                             <property name="window-slot" bind-source="NautilusWindow" bind-property="active-slot" bind-flags="sync-create"/>
@@ -209,6 +222,7 @@
         <setter object="toolbar" property="show-history-controls">False</setter>
         <setter object="action_bar" property="revealed">True</setter>
         <setter object="progress_indicator" property="popover-position">2</setter>
+        <setter object="places_sidebar" property="opacity">0.6</setter>
       </object>
     </child>
   </template>

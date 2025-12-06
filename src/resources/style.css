@@ -371,6 +371,10 @@ rubberband {
 label.pill {
   border-radius: 12px;
   padding: 4px 10px;
+  /* Allow text to wrap and shrink when sidebar is narrow */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
 }
 
 label.pill.success {

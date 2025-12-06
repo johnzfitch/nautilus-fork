@@ -70,6 +70,9 @@ static void nautilus_window_back_or_forward (NautilusWindow *window,
                                              guint           distance);
 static void nautilus_window_sync_location_widgets (NautilusWindow *window);
 static void update_cursor (NautilusWindow *window);
+static void on_split_view_state_changed (GObject    *object,
+                                          GParamSpec *pspec,
+                                          gpointer    user_data);
 
 /* Sanity check: highest mouse button value I could find was 14. 5 is our
  * lower threshold (well-documented to be the one of the button events for the
@@ -108,6 +111,12 @@ struct _NautilusWindow
     gboolean temporary_navigation_bar;
 
     GtkWidget *network_address_bar;
+
+    /* Action bar (revealed when window is narrow) */
+    GtkWidget *action_bar;
+
+    /* Search-cache status indicator in action bar */
+    GtkWidget *searchcache_status_actionbar_label;
 
     guint sidebar_width_handler_id;
 
@@ -1540,6 +1549,12 @@ nautilus_window_init (NautilusWindow *window)
     g_signal_connect (window, "notify::maximized",
                       G_CALLBACK (on_is_maximized_changed), NULL);
 
+    /* Update search-cache status label visibility immediately when split view state changes */
+    g_signal_connect (window->split_view, "notify::collapsed",
+                      G_CALLBACK (on_split_view_state_changed), window);
+    g_signal_connect (window->split_view, "notify::show-sidebar",
+                      G_CALLBACK (on_split_view_state_changed), window);
+
     window->slots = NULL;
     window->active_slot = NULL;
 
@@ -1625,6 +1640,59 @@ nautilus_window_set_property (GObject      *object,
 }
 
 static void
+on_split_view_state_changed (GObject    *object,
+                              GParamSpec *pspec,
+                              gpointer    user_data)
+{
+    NautilusWindow *window = NAUTILUS_WINDOW (user_data);
+
+    /* Update visibility of search-cache status labels based on current split view state */
+    if (window->places_sidebar != NULL && window->split_view != NULL &&
+        window->searchcache_status_actionbar_label != NULL)
+    {
+        gboolean sidebar_visible = adw_overlay_split_view_get_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (window->split_view));
+        gboolean collapsed = adw_overlay_split_view_get_collapsed (ADW_OVERLAY_SPLIT_VIEW (window->split_view));
+
+        /* Show sidebar label only when sidebar is visible AND not in collapsed/overlay mode */
+        nautilus_sidebar_set_searchcache_label_visible (window->places_sidebar, sidebar_visible && !collapsed);
+    }
+}
+
+void
+nautilus_window_update_searchcache_status (NautilusWindow *window,
+                                           const gchar    *text,
+                                           const gchar    *css_class)
+{
+    g_return_if_fail (NAUTILUS_IS_WINDOW (window));
+
+    if (window->searchcache_status_actionbar_label == NULL)
+    {
+        return;
+    }
+
+    gtk_label_set_text (GTK_LABEL (window->searchcache_status_actionbar_label), text);
+
+    /* Remove both success and error classes, then add the requested one */
+    gtk_widget_remove_css_class (window->searchcache_status_actionbar_label, "success");
+    gtk_widget_remove_css_class (window->searchcache_status_actionbar_label, "error");
+
+    if (css_class != NULL && *css_class != '\0')
+    {
+        gtk_widget_add_css_class (window->searchcache_status_actionbar_label, css_class);
+    }
+
+    /* Hide sidebar label when split view is collapsed or action bar is revealed */
+    if (window->places_sidebar != NULL && window->split_view != NULL)
+    {
+        gboolean sidebar_visible = adw_overlay_split_view_get_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (window->split_view));
+        gboolean collapsed = adw_overlay_split_view_get_collapsed (ADW_OVERLAY_SPLIT_VIEW (window->split_view));
+
+        /* Show sidebar label only when sidebar is visible AND not in collapsed/overlay mode */
+        nautilus_sidebar_set_searchcache_label_visible (window->places_sidebar, sidebar_visible && !collapsed);
+    }
+}
+
+static void
 nautilus_window_class_init (NautilusWindowClass *class)
 {
     GObjectClass *oclass = G_OBJECT_CLASS (class);
@@ -1661,6 +1729,8 @@ nautilus_window_class_init (NautilusWindowClass *class)
     gtk_widget_class_bind_template_child (wclass, NautilusWindow, tab_view);
     gtk_widget_class_bind_template_child (wclass, NautilusWindow, tab_bar);
     gtk_widget_class_bind_template_child (wclass, NautilusWindow, network_address_bar);
+    gtk_widget_class_bind_template_child (wclass, NautilusWindow, action_bar);
+    gtk_widget_class_bind_template_child (wclass, NautilusWindow, searchcache_status_actionbar_label);
 
     signals[SLOT_ADDED] =
         g_signal_new ("slot-added",
