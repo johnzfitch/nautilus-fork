@@ -3,7 +3,7 @@
 Enhanced GNOME Files (Nautilus) with performance optimizations and extended features.
 
 **Repository:** https://github.com/johnzfitch/nautilus-plus
-**AUR Package:** `nautilus-plus`
+**AUR Package:** [nautilus-plus](https://aur.archlinux.org/packages/nautilus-plus)
 **Based on:** GNOME Nautilus 50.alpha
 
 ## Features
